@@ -133,7 +133,7 @@ export function AuthScreen({ onAuth }: { onAuth: (u: User) => void }) {
               <Input label="Admin Secret Code" type="password" value={secret} onChange={setSecret} placeholder="Studio-issued access code" />
               <Btn onClick={handleRegisterAdmin} style={{ width: "100%", padding: 15 }}>🏰 Access Admin Portal</Btn>
               <div style={{ fontSize: 12, color: C.gray, textAlign: "center" }}>
-                Demo secret: <span style={{ color: C.violet2 }}>FORGE2026</span>
+                🔒 Ask the admin for the secret code
               </div>
             </div>
           )}
