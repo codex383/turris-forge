@@ -1,0 +1,1593 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+
+/* ═══════════════════════════════════════════════════════════════
+   TURRIS FORGE STUDIOS — Full Production Task Platform
+   Self-contained React app (no backend required for demo)
+   All data stored in component state; swap in Firebase calls
+   at the marked // FIREBASE: comments
+═══════════════════════════════════════════════════════════════ */
+
+// ── Brand tokens ──────────────────────────────────────────────
+const C = {
+  bg:      "#0D0D0F",
+  sur:     "#1A1A1F",
+  sur2:    "#22222A",
+  gold:    "#E8912A",
+  gold2:   "#FFB347",
+  ash:     "#E8E4DC",
+  ember:   "#C0392B",
+  cyan:    "#00E5FF",
+  violet:  "#9B59B6",
+  violet2: "#C084FC",
+  pink:    "#FF006E",
+  lime:    "#A8FF3E",
+  teal:    "#00F5CC",
+  gray:    "#6B6870",
+  gray2:   "#A09890",
+};
+
+const SKILL_CATEGORIES = [
+  "2D Animation","3D Animation","Storyboarding","Character Design",
+  "Background Design","Concept Art","Coloring / Color Grading","Inking",
+  "Lettering / Typography","Lip Sync Animation","VFX / Motion Graphics",
+  "Sound Design Sync","In-Between Animation","Clean-Up Animation",
+  "Layout & Composition","Rigging","Asset Creation","Script Adaptation",
+];
+
+const ADMIN_SECRET = "FORGE2026"; // in production this comes from env
+
+// ── Turris Forge Logo SVG ──────────────────────────────────────
+const Logo = ({ size = 36 }) => (
+  <svg width={size} height={size * 1.3} viewBox="0 0 100 130" fill="none">
+    <rect x="20" y="5"  width="12" height="18" fill={C.gold}/>
+    <rect x="44" y="5"  width="12" height="18" fill={C.gold}/>
+    <rect x="68" y="5"  width="12" height="18" fill={C.gold}/>
+    <rect x="20" y="23" width="60" height="8"  fill={C.gold}/>
+    <polygon points="25,31 75,31 68,70 32,70"  fill={C.gold}/>
+    <rect x="18" y="70" width="64" height="7"  fill={C.gold}/>
+    <rect x="22" y="77" width="56" height="14" fill={C.gold}/>
+    <polygon points="22,77 10,84 22,91"         fill={C.gold}/>
+    <rect x="15" y="91" width="70" height="10" fill={C.gold}/>
+    <rect x="22" y="101" width="12" height="16" fill={C.gold}/>
+    <rect x="66" y="101" width="12" height="16" fill={C.gold}/>
+  </svg>
+);
+
+// ── Particle Canvas ────────────────────────────────────────────
+function ParticleCanvas() {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    resize();
+    window.addEventListener("resize", resize);
+    const COLORS = [[232,145,42],[0,229,255],[192,84,252],[255,0,110],[168,255,62],[0,245,204]];
+    const particles = Array.from({ length: 140 }, () => {
+      const c = COLORS[Math.floor(Math.random() * COLORS.length)];
+      return {
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        size: Math.random() * 2.5 + 0.5,
+        sy: Math.random() * 1.2 + 0.3,
+        sx: (Math.random() - 0.5) * 0.5,
+        op: Math.random() * 0.6 + 0.1,
+        decay: Math.random() * 0.003 + 0.001,
+        color: c,
+      };
+    });
+    let af;
+    const animate = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      particles.forEach(p => {
+        p.y -= p.sy; p.x += p.sx; p.op -= p.decay;
+        if (p.op <= 0 || p.y < -10) {
+          p.x = Math.random() * canvas.width; p.y = canvas.height + 10;
+          p.op = Math.random() * 0.6 + 0.1;
+          const c2 = COLORS[Math.floor(Math.random() * COLORS.length)]; p.color = c2;
+        }
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${p.color[0]},${p.color[1]},${p.color[2]},${p.op})`;
+        ctx.fill();
+      });
+      af = requestAnimationFrame(animate);
+    };
+    animate();
+    return () => { cancelAnimationFrame(af); window.removeEventListener("resize", resize); };
+  }, []);
+  return <canvas ref={canvasRef} style={{ position:"fixed", inset:0, zIndex:0, pointerEvents:"none" }} />;
+}
+
+// ── Toast ──────────────────────────────────────────────────────
+function Toast({ msg, onDone }) {
+  useEffect(() => { const t = setTimeout(onDone, 3500); return () => clearTimeout(t); }, [onDone]);
+  return (
+    <div style={{
+      position:"fixed", bottom:32, right:32, zIndex:9999,
+      background:C.sur, border:`1px solid ${C.gold}33`,
+      borderLeft:`3px solid ${C.gold}`, borderRadius:8,
+      padding:"14px 22px", fontSize:14, color:C.ash,
+      boxShadow:"0 10px 40px #00000080",
+      animation:"toastIn .4s cubic-bezier(.4,0,.2,1)",
+    }}>
+      {msg}
+    </div>
+  );
+}
+
+// ── Countdown Timer hook ───────────────────────────────────────
+function useCountdown(deadline) {
+  const [remaining, setRemaining] = useState(0);
+  useEffect(() => {
+    if (!deadline) return;
+    const tick = () => setRemaining(Math.floor((deadline - Date.now()) / 1000));
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [deadline]);
+  return remaining;
+}
+
+function fmtTime(secs) {
+  const neg = secs < 0;
+  const s = Math.abs(secs);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return `${neg ? "-" : ""}${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(ss).padStart(2,"0")}`;
+}
+
+// ── Shared UI components ───────────────────────────────────────
+const Eyebrow = ({ children, color = C.cyan }) => (
+  <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:12, fontWeight:700,
+    letterSpacing:"0.4em", textTransform:"uppercase", color, marginBottom:12 }}>
+    {children}
+  </div>
+);
+
+const SectionTitle = ({ children }) => (
+  <h2 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:"clamp(28px,4vw,52px)",
+    fontWeight:700, color:C.ash, marginBottom:16, lineHeight:1.1 }}>
+    {children}
+  </h2>
+);
+
+const GlowDivider = ({ colors = [C.gold, C.cyan] }) => (
+  <div style={{ width:80, height:2, margin:"16px 0 28px",
+    background:`linear-gradient(90deg,${colors[0]},${colors[1]},transparent)`,
+    borderRadius:2 }} />
+);
+
+const Badge = ({ children, color }) => (
+  <span style={{ padding:"3px 10px", fontFamily:"'Barlow Condensed',sans-serif",
+    fontSize:11, letterSpacing:"0.1em", textTransform:"uppercase", borderRadius:3,
+    background:`${color}22`, color, border:`1px solid ${color}55` }}>
+    {children}
+  </span>
+);
+
+const Input = ({ label, type = "text", value, onChange, placeholder, required, style }) => (
+  <div style={{ display:"flex", flexDirection:"column", gap:6, ...style }}>
+    {label && <label style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:12,
+      fontWeight:700, letterSpacing:"0.2em", textTransform:"uppercase", color:C.gray2 }}>
+      {label}
+    </label>}
+    <input type={type} value={value} onChange={e => onChange(e.target.value)}
+      placeholder={placeholder} required={required}
+      style={{ padding:"13px 15px", background:C.bg,
+        border:`1px solid #ffffff10`, borderBottom:`2px solid ${C.gold}44`,
+        borderRadius:8, color:C.ash, fontFamily:"'Inter',sans-serif", fontSize:14,
+        outline:"none", transition:"all .3s" }}
+      onFocus={e => { e.target.style.borderBottomColor = C.gold; e.target.style.boxShadow = `0 4px 20px ${C.gold}33`; }}
+      onBlur={e => { e.target.style.borderBottomColor = `${C.gold}44`; e.target.style.boxShadow = "none"; }}
+    />
+  </div>
+);
+
+const Select = ({ label, value, onChange, options, accentColor = C.violet2, style }) => (
+  <div style={{ display:"flex", flexDirection:"column", gap:6, ...style }}>
+    {label && <label style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:12,
+      fontWeight:700, letterSpacing:"0.2em", textTransform:"uppercase", color:C.gray2 }}>
+      {label}
+    </label>}
+    <select value={value} onChange={e => onChange(e.target.value)}
+      style={{ padding:"13px 15px", background:C.bg,
+        border:`1px solid #ffffff10`, borderBottom:`2px solid ${accentColor}44`,
+        borderRadius:8, color:C.ash, fontFamily:"'Inter',sans-serif", fontSize:14,
+        outline:"none", cursor:"pointer", appearance:"none" }}>
+      {options.map(o => (
+        <option key={o.value ?? o} value={o.value ?? o} style={{ background:C.sur }}>
+          {o.label ?? o}
+        </option>
+      ))}
+    </select>
+  </div>
+);
+
+const Btn = ({ children, onClick, variant = "primary", style, type = "button" }) => {
+  const [hov, setHov] = useState(false);
+  const base = {
+    padding:"13px 28px", fontFamily:"'Barlow Condensed',sans-serif",
+    fontSize:14, fontWeight:700, letterSpacing:"0.14em", textTransform:"uppercase",
+    border:"none", borderRadius:6, cursor:"pointer", transition:"all .35s",
+    display:"inline-flex", alignItems:"center", justifyContent:"center", gap:8,
+  };
+  if (variant === "primary") return (
+    <button type={type} onClick={onClick} style={{ ...base,
+      color:"#000",
+      background:`linear-gradient(135deg,${C.gold},${C.gold2},${C.cyan})`,
+      backgroundSize:"200%", backgroundPosition: hov ? "100%" : "0%",
+      boxShadow: hov ? `0 8px 40px ${C.gold}88,0 0 60px ${C.cyan}33` : `0 0 20px ${C.gold}55`,
+      transform: hov ? "translateY(-3px)" : "none", ...style }}
+      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
+      {children}
+    </button>
+  );
+  if (variant === "ghost") return (
+    <button type={type} onClick={onClick} style={{ ...base,
+      color: hov ? "#fff" : C.violet2, background: hov ? `linear-gradient(135deg,${C.violet},${C.pink})` : "transparent",
+      border:`1px solid ${hov ? C.pink : C.violet2}`,
+      transform: hov ? "translateY(-2px)" : "none",
+      boxShadow: hov ? `0 8px 30px ${C.pink}44` : "none", ...style }}
+      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
+      {children}
+    </button>
+  );
+  if (variant === "danger") return (
+    <button type={type} onClick={onClick} style={{ ...base,
+      color: hov ? "#fff" : C.ember, background: hov ? C.ember : "transparent",
+      border:`1px solid ${C.ember}`,
+      transform: hov ? "translateY(-2px)" : "none", ...style }}
+      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
+      {children}
+    </button>
+  );
+  if (variant === "subtle") return (
+    <button type={type} onClick={onClick} style={{ ...base,
+      color: hov ? C.ash : C.gray2, background: hov ? C.sur2 : C.sur,
+      border:`1px solid ${hov ? C.gray : "#ffffff10"}`, ...style }}
+      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
+      {children}
+    </button>
+  );
+};
+
+const Card = ({ children, style, glow }) => (
+  <div style={{ background:C.sur, borderRadius:12, border:"1px solid #ffffff08",
+    padding:28, position:"relative", overflow:"hidden", transition:"all .4s",
+    boxShadow: glow ? `0 0 40px ${glow}22` : "none", ...style }}>
+    {children}
+  </div>
+);
+
+// Status badge colours
+function statusColor(s) {
+  return { Open:C.lime, "In Progress":C.cyan, Submitted:C.gold, Approved:C.teal, Expired:C.ember }[s] || C.gray;
+}
+function diffColor(d) {
+  return { Beginner:C.lime, Intermediate:C.gold, Expert:C.pink }[d] || C.gray;
+}
+
+// ── Seed demo data ─────────────────────────────────────────────
+const SEED_JOBS = [
+  { id:"j1", title:"Key Animation — Redmask Fight Scene 03", category:"2D Animation",
+    difficulty:"Expert", description:"Animate 60 frames of the rooftop duel between Redmask and the Shadow Broker. Full key animation required. Reference sheets attached.", pay:250, deadline: Date.now()+3600*24*1000*3,
+    status:"Open", submissions:[], visibility:"Public", posted: Date.now()-3600000 },
+  { id:"j2", title:"Background Design — Ironbound Prison Block", category:"Background Design",
+    difficulty:"Intermediate", description:"Design a high-security supernatural prison. Arcane runes etched into stone walls. Blend Yoruba architectural motifs with dark fantasy.", pay:120, deadline: Date.now()+3600*1000*18,
+    status:"Open", submissions:[], visibility:"Public", posted: Date.now()-7200000 },
+  { id:"j3", title:"Character Design — The Syndicate Boss", category:"Character Design",
+    difficulty:"Expert", description:"Full turnaround sheet (front/side/back) for the main antagonist. Corporate attire fused with West African traditional garments. 3 expression sheets.", pay:180, deadline: Date.now()+3600*24*1000*5,
+    status:"Open", submissions:[], visibility:"Public", posted: Date.now()-900000 },
+  { id:"j4", title:"Storyboard — Iron Bound Episode 01 Cold Open", category:"Storyboarding",
+    difficulty:"Intermediate", description:"Panel storyboard for the 3-minute cold open sequence. Must convey rhythm and visual language established in style guide.", pay:90, deadline: Date.now()+3600*1000*10,
+    status:"Open", submissions:[], visibility:"Public", posted: Date.now()-1800000 },
+  { id:"j5", title:"VFX — Spirit Manifestation Effect Pack", category:"VFX / Motion Graphics",
+    difficulty:"Expert", description:"Create 8 reusable VFX sequences for spirit summons in Iron Bound. Particle-based with traditional pattern overlays.", pay:320, deadline: Date.now()+3600*24*1000*7,
+    status:"Open", submissions:[], visibility:"Public", posted: Date.now()-3600*2000 },
+  { id:"j6", title:"Coloring Pass — Redmask Episode 02 Act 1", category:"Coloring / Color Grading",
+    difficulty:"Beginner", description:"Color flat pass for 240 frames. Line art and palette guide provided. Consistency and speed are key.", pay:60, deadline: Date.now()+3600*1000*8,
+    status:"Open", submissions:[], visibility:"Public", posted: Date.now()-600000 },
+];
+
+const SEED_WORKERS = [
+  { id:"w1", name:"Seun Adesola", email:"seun@forge.ng", role:"worker",
+    skills:["2D Animation","Character Design","Inking"], balance:480, joined: Date.now()-3600*24*1000*20,
+    bio:"Senior animator with 7 years in Japanese-style production.", portfolio:"https://artstation.com",
+    history:[] },
+  { id:"w2", name:"Tunde Eze", email:"tunde@forge.ng", role:"worker",
+    skills:["Background Design","Concept Art","Layout & Composition"], balance:210, joined: Date.now()-3600*24*1000*12,
+    bio:"Environment specialist. Background in architectural illustration.", portfolio:"",
+    history:[] },
+];
+
+// ═══════════════════════════════════════════════════════════════
+//  LOADING SCREEN
+// ═══════════════════════════════════════════════════════════════
+function LoadingScreen({ onDone }) {
+  const [phase, setPhase] = useState(0);
+  const barRef = useRef(null);
+  useEffect(() => {
+    const t1 = setTimeout(() => setPhase(1), 500);
+    const t2 = setTimeout(() => setPhase(2), 900);
+    const t3 = setTimeout(() => setPhase(3), 1600);
+    const t4 = setTimeout(() => setPhase(4), 1900);
+    const t5 = setTimeout(() => { setPhase(5); setTimeout(onDone, 900); }, 3800);
+    return () => [t1,t2,t3,t4,t5].forEach(clearTimeout);
+  }, [onDone]);
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:9999, background:"#000",
+      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+      gap:28, transition:"opacity .9s, clipPath .9s",
+      opacity: phase === 5 ? 0 : 1,
+      clipPath: phase === 5 ? "circle(0% at 50% 50%)" : "circle(100% at 50% 50%)",
+    }}>
+      <div style={{ opacity: phase >= 1 ? 1 : 0, transform: phase >= 1 ? "scale(1)" : "scale(2)",
+        filter:`drop-shadow(0 0 30px ${C.gold})`, transition:"all .6s" }}>
+        <Logo size={70} />
+      </div>
+      <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:"clamp(32px,6vw,64px)",
+        fontWeight:700, letterSpacing:"0.4em", color:C.gold,
+        textShadow:`0 0 40px ${C.gold}, 0 0 80px ${C.gold}66`,
+        opacity: phase >= 2 ? 1 : 0, transform: phase >= 2 ? "scaleX(1)" : "scaleX(0.4)",
+        transition:"all .8s cubic-bezier(.4,0,.2,1)" }}>
+        TURRIS FORGE
+      </div>
+      <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:13, letterSpacing:"0.35em",
+        color:C.gold, opacity: phase >= 3 ? 1 : 0, transition:"opacity .5s",
+        textTransform:"uppercase" }}>
+        Forged in Darkness. Animated in Fire.
+      </div>
+      <div style={{ width:240, height:2, background:`${C.gold}30`, borderRadius:2, overflow:"hidden",
+        opacity: phase >= 4 ? 1 : 0, transition:"opacity .3s" }}>
+        <div style={{ height:"100%", borderRadius:2,
+          background:`linear-gradient(90deg,${C.gold},${C.cyan},${C.violet2},${C.gold})`,
+          backgroundSize:"300%",
+          width: phase >= 4 ? "100%" : "0%",
+          transition: phase >= 4 ? "width 1.8s cubic-bezier(.4,0,.2,1)" : "none",
+          animation:"shimmer 1s linear infinite",
+        }} />
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTH SCREEN
+// ═══════════════════════════════════════════════════════════════
+function AuthScreen({ onAuth }) {
+  const [mode, setMode] = useState("login"); // login | register-worker | register-admin
+  const [step, setStep] = useState(1);
+  const [toast, setToast] = useState(null);
+  // Login
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  // Register common
+  const [name, setName] = useState("");
+  const [rEmail, setREmail] = useState("");
+  const [rPass, setRPass] = useState("");
+  const [secret, setSecret] = useState("");
+  // Worker specific
+  const [bio, setBio] = useState("");
+  const [portfolio, setPortfolio] = useState("");
+  const [selectedSkills, setSelectedSkills] = useState([]);
+  // Admin specific
+  const [studioRole, setStudioRole] = useState("Studio Director");
+
+  const toggleSkill = s => setSelectedSkills(p => p.includes(s) ? p.filter(x => x !== s) : [...p, s]);
+
+  const handleLogin = () => {
+    // FIREBASE: signInWithEmailAndPassword
+    if (email === "admin@turrisforge.com" && pass === "admin123") {
+      onAuth({ id:"admin1", name:"Wahnsinn", email, role:"admin", balance:0 });
+    } else {
+      const found = SEED_WORKERS.find(w => w.email === email);
+      if (found) { onAuth(found); }
+      else { setToast("⚠️ Invalid credentials. Try admin@turrisforge.com / admin123"); }
+    }
+  };
+
+  const handleRegisterWorker = () => {
+    if (step === 1) { if (!name || !rEmail || !rPass) { setToast("Fill all fields"); return; } setStep(2); return; }
+    if (selectedSkills.length === 0) { setToast("Select at least one skill"); return; }
+    const user = { id:"w"+Date.now(), name, email:rEmail, role:"worker",
+      skills:selectedSkills, balance:0, joined:Date.now(), bio, portfolio, history:[] };
+    onAuth(user);
+  };
+
+  const handleRegisterAdmin = () => {
+    if (!name || !rEmail || !rPass) { setToast("Fill all fields"); return; }
+    if (secret !== ADMIN_SECRET) { setToast("❌ Invalid studio secret code"); return; }
+    onAuth({ id:"adm"+Date.now(), name, email:rEmail, role:"admin", balance:0 });
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+      padding:"80px 16px 40px", position:"relative", zIndex:1 }}>
+      <div style={{ width:"100%", maxWidth:500 }}>
+        {/* Glow */}
+        <div style={{ position:"absolute", inset:-60, background:`radial-gradient(ellipse,${C.violet}1a 0%,${C.cyan}0a 60%,transparent 80%)`, pointerEvents:"none" }} />
+        <div style={{ background:"rgba(26,26,31,.97)", backdropFilter:"blur(20px)",
+          borderRadius:16, padding:"44px 36px", border:"1px solid #ffffff10",
+          position:"relative", overflow:"hidden", boxShadow:"0 30px 80px #00000099" }}>
+          {/* top gradient bar */}
+          <div style={{ position:"absolute", top:0, left:0, right:0, height:2,
+            background:`linear-gradient(90deg,${C.violet},${C.pink},${C.gold},${C.cyan})`,
+            backgroundSize:"200%", animation:"authBar 3s linear infinite" }} />
+          {/* Logo */}
+          <div style={{ textAlign:"center", marginBottom:28 }}>
+            <div style={{ display:"inline-block", filter:`drop-shadow(0 0 12px ${C.gold})` }}>
+              <Logo size={42} />
+            </div>
+            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:13, fontWeight:700,
+              letterSpacing:"0.3em", textTransform:"uppercase", color:C.gold, marginTop:8 }}>
+              TURRIS FORGE · STUDIO PLATFORM
+            </div>
+          </div>
+
+          {/* Mode selector tabs */}
+          <div style={{ display:"flex", gap:0, background:C.bg, borderRadius:8, padding:4, marginBottom:28 }}>
+            {[["login","Log In"],["register-worker","Join as Creative"],["register-admin","Admin Access"]].map(([m,l]) => (
+              <button key={m} onClick={() => { setMode(m); setStep(1); }}
+                style={{ flex:1, padding:"9px 6px", fontFamily:"'Barlow Condensed',sans-serif",
+                  fontSize:12, fontWeight:700, letterSpacing:"0.1em", textTransform:"uppercase",
+                  background: mode===m ? `linear-gradient(135deg,${C.violet}66,${C.cyan}33)` : "none",
+                  color: mode===m ? C.ash : C.gray, border:"none", borderRadius:6, cursor:"pointer",
+                  boxShadow: mode===m ? `0 0 20px ${C.violet}44` : "none", transition:"all .3s" }}>
+                {l}
+              </button>
+            ))}
+          </div>
+
+          {/* LOGIN */}
+          {mode === "login" && (
+            <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+              <Input label="Email" type="email" value={email} onChange={setEmail} placeholder="you@forge.com" />
+              <Input label="Password" type="password" value={pass} onChange={setPass} placeholder="Your password" />
+              <Btn onClick={handleLogin} style={{ width:"100%", padding:15, marginTop:4 }}>
+                ⚡ Enter the Forge
+              </Btn>
+              <div style={{ textAlign:"center", fontSize:12, color:C.gray }}>
+                Demo: <span style={{ color:C.gold }}>admin@turrisforge.com</span> / admin123
+              </div>
+              <div style={{ textAlign:"center", fontSize:12, color:C.gray }}>
+                or worker: <span style={{ color:C.cyan }}>seun@forge.ng</span> / any password
+              </div>
+            </div>
+          )}
+
+          {/* REGISTER WORKER */}
+          {mode === "register-worker" && (
+            <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+              {step === 1 && <>
+                <Input label="Your Display Name" value={name} onChange={setName} placeholder="Your forge name" />
+                <Input label="Email" type="email" value={rEmail} onChange={setREmail} placeholder="you@example.com" />
+                <Input label="Password" type="password" value={rPass} onChange={setRPass} placeholder="Strong password" />
+                <Input label="Bio (optional)" value={bio} onChange={setBio} placeholder="Your creative background..." />
+                <Input label="Portfolio Link" value={portfolio} onChange={setPortfolio} placeholder="https://artstation.com/you" />
+                <Btn onClick={handleRegisterWorker} style={{ width:"100%", padding:15 }}>Next → Select Skills</Btn>
+              </>}
+              {step === 2 && <>
+                <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:12, fontWeight:700,
+                  letterSpacing:"0.2em", textTransform:"uppercase", color:C.gray2, marginBottom:4 }}>
+                  Your Skill Categories
+                </div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:8, maxHeight:260, overflowY:"auto" }}>
+                  {SKILL_CATEGORIES.map(s => (
+                    <button key={s} onClick={() => toggleSkill(s)}
+                      style={{ padding:"6px 12px", fontFamily:"'Barlow Condensed',sans-serif",
+                        fontSize:12, letterSpacing:"0.1em", textTransform:"uppercase",
+                        background: selectedSkills.includes(s) ? `${C.gold}22` : C.sur2,
+                        color: selectedSkills.includes(s) ? C.gold : C.gray2,
+                        border:`1px solid ${selectedSkills.includes(s) ? C.gold : "#ffffff10"}`,
+                        borderRadius:4, cursor:"pointer", transition:"all .2s" }}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display:"flex", gap:10 }}>
+                  <Btn variant="subtle" onClick={() => setStep(1)} style={{ flex:1 }}>← Back</Btn>
+                  <Btn onClick={handleRegisterWorker} style={{ flex:1, padding:15 }}>🔥 Join the Forge</Btn>
+                </div>
+              </>}
+            </div>
+          )}
+
+          {/* REGISTER ADMIN */}
+          {mode === "register-admin" && (
+            <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+              <Input label="Your Name" value={name} onChange={setName} placeholder="Studio admin name" />
+              <Input label="Email" type="email" value={rEmail} onChange={setREmail} placeholder="admin@turrisforge.com" />
+              <Input label="Password" type="password" value={rPass} onChange={setRPass} placeholder="Strong password" />
+              <Select label="Your Studio Role" value={studioRole} onChange={setStudioRole}
+                options={["Studio Director","Executive Producer","Production Manager","Lead Animator","Art Director"]} />
+              <Input label="Admin Secret Code" type="password" value={secret} onChange={setSecret}
+                placeholder="Studio-issued access code" />
+              <Btn onClick={handleRegisterAdmin} style={{ width:"100%", padding:15 }}>
+                🏰 Access Admin Portal
+              </Btn>
+              <div style={{ fontSize:12, color:C.gray, textAlign:"center" }}>
+                Demo secret: <span style={{ color:C.violet2 }}>FORGE2026</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Fan perks */}
+        <div style={{ marginTop:20, background:`linear-gradient(135deg,${C.violet}1a,${C.cyan}0d)`,
+          border:`1px solid ${C.violet}33`, borderRadius:10, padding:"18px 20px" }}>
+          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:12, fontWeight:700,
+            letterSpacing:"0.3em", textTransform:"uppercase", color:C.violet2, marginBottom:10 }}>
+            🏆 Creative Platform Benefits
+          </div>
+          {[["gold","Real pay for real animation work"],["cyan","Assigned by Africa's first anime studio"],
+            ["violet2","Build your portfolio with original IPs"],["lime","Performance bonuses & priority tasks"],
+            ["pink","Your name in the credits of our first release"]].map(([col, txt]) => (
+            <div key={txt} style={{ display:"flex", gap:10, alignItems:"center", marginBottom:6 }}>
+              <div style={{ width:6, height:6, borderRadius:"50%", background:C[col], flexShrink:0 }} />
+              <div style={{ fontSize:13, color:C.gray2 }}>{txt}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {toast && <Toast msg={toast} onDone={() => setToast(null)} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ADMIN DASHBOARD
+// ═══════════════════════════════════════════════════════════════
+function AdminDashboard({ user, onLogout }) {
+  const [view, setView] = useState("overview");
+  const [jobs, setJobs] = useState(SEED_JOBS);
+  const [workers, setWorkers] = useState(SEED_WORKERS);
+  const [toast, setToast] = useState(null);
+  const showToast = msg => { setToast(msg); };
+
+  const stats = {
+    total: jobs.length,
+    open: jobs.filter(j => j.status === "Open").length,
+    submitted: jobs.filter(j => j.status === "Submitted").length,
+    approved: jobs.filter(j => j.status === "Approved").length,
+    paidOut: workers.reduce((s, w) => s + w.balance, 0),
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", position:"relative", zIndex:1 }}>
+      {/* Sidebar */}
+      <div style={{ position:"fixed", left:0, top:0, bottom:0, width:240,
+        background:"rgba(26,26,31,.98)", borderRight:`1px solid ${C.gold}22`,
+        backdropFilter:"blur(20px)", zIndex:50, display:"flex", flexDirection:"column",
+        padding:"0 0 20px" }}>
+        {/* Brand */}
+        <div style={{ padding:"24px 20px", borderBottom:`1px solid #ffffff08`,
+          display:"flex", alignItems:"center", gap:10 }}>
+          <Logo size={28} />
+          <div>
+            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:15, fontWeight:700,
+              letterSpacing:"0.15em", color:C.ash }}>TURRIS FORGE</div>
+            <div style={{ fontSize:10, color:C.gold, fontFamily:"'Barlow Condensed',sans-serif",
+              letterSpacing:"0.2em", textTransform:"uppercase" }}>Admin Portal</div>
+          </div>
+        </div>
+        {/* User */}
+        <div style={{ padding:"16px 20px", borderBottom:`1px solid #ffffff08` }}>
+          <div style={{ width:44, height:44, borderRadius:"50%",
+            background:`linear-gradient(135deg,${C.gold},${C.gold2})`,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontFamily:"'Cormorant Garamond',serif", fontSize:20, fontWeight:700, color:"#000",
+            marginBottom:8 }}>{user.name[0]}</div>
+          <div style={{ fontSize:14, color:C.ash, fontWeight:500 }}>{user.name}</div>
+          <div style={{ fontSize:11, color:C.gold, fontFamily:"'Barlow Condensed',sans-serif",
+            letterSpacing:"0.15em", textTransform:"uppercase" }}>Studio Admin</div>
+        </div>
+        {/* Nav */}
+        <nav style={{ flex:1, padding:"8px 12px", display:"flex", flexDirection:"column", gap:2 }}>
+          {[["overview","📊 Overview"],["post","➕ Post Job"],["jobs","📋 Manage Jobs"],
+            ["submissions","📥 Review Submissions"],["workers","👥 Workers"],["analytics","📈 Analytics"]].map(([v,l]) => (
+            <button key={v} onClick={() => setView(v)}
+              style={{ padding:"10px 12px", fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:13, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase",
+                textAlign:"left", background: view===v ? `${C.gold}18` : "transparent",
+                color: view===v ? C.gold : C.gray2, border:"none",
+                borderLeft: view===v ? `2px solid ${C.gold}` : "2px solid transparent",
+                borderRadius:4, cursor:"pointer", transition:"all .25s" }}>
+              {l}
+            </button>
+          ))}
+        </nav>
+        <div style={{ padding:"0 12px" }}>
+          <Btn variant="danger" onClick={onLogout} style={{ width:"100%", padding:"9px 12px", fontSize:12 }}>
+            ← Logout
+          </Btn>
+        </div>
+      </div>
+
+      {/* Main content */}
+      <div style={{ marginLeft:240, padding:"28px 36px", minHeight:"100vh" }}>
+        {view === "overview" && <AdminOverview stats={stats} jobs={jobs} workers={workers} setView={setView} />}
+        {view === "post" && <AdminPostJob jobs={jobs} setJobs={setJobs} showToast={showToast} setView={setView} />}
+        {view === "jobs" && <AdminManageJobs jobs={jobs} setJobs={setJobs} showToast={showToast} />}
+        {view === "submissions" && <AdminSubmissions jobs={jobs} setJobs={setJobs} workers={workers} setWorkers={setWorkers} showToast={showToast} />}
+        {view === "workers" && <AdminWorkers workers={workers} />}
+        {view === "analytics" && <AdminAnalytics stats={stats} jobs={jobs} workers={workers} />}
+      </div>
+      {toast && <Toast msg={toast} onDone={() => setToast(null)} />}
+    </div>
+  );
+}
+
+function AdminOverview({ stats, jobs, workers, setView }) {
+  const statCards = [
+    { label:"Total Jobs", val:stats.total, color:C.gold, icon:"📋" },
+    { label:"Open", val:stats.open, color:C.lime, icon:"✅" },
+    { label:"Awaiting Review", val:stats.submitted, color:C.cyan, icon:"📥" },
+    { label:"Approved", val:stats.approved, color:C.teal, icon:"🏆" },
+    { label:"Total Paid Out", val:`₦${stats.paidOut.toLocaleString()}`, color:C.violet2, icon:"💰" },
+    { label:"Active Workers", val:workers.length, color:C.pink, icon:"👥" },
+  ];
+  return (
+    <div>
+      <Eyebrow color={C.gold}>Admin Control Center</Eyebrow>
+      <SectionTitle>Studio Overview</SectionTitle>
+      <GlowDivider />
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(170px,1fr))", gap:16, marginBottom:36 }}>
+        {statCards.map(({ label, val, color, icon }) => (
+          <Card key={label} glow={color} style={{ textAlign:"center", padding:20 }}>
+            <div style={{ fontSize:28, marginBottom:6 }}>{icon}</div>
+            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:30, fontWeight:700,
+              background:`linear-gradient(135deg,${color},${C.ash})`,
+              WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>{val}</div>
+            <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:11, letterSpacing:"0.2em",
+              textTransform:"uppercase", color:C.gray, marginTop:4 }}>{label}</div>
+          </Card>
+        ))}
+      </div>
+      {/* Recent jobs */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:24 }}>
+        <Card>
+          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:13, fontWeight:700,
+            letterSpacing:"0.2em", textTransform:"uppercase", color:C.gold, marginBottom:16 }}>
+            Recent Jobs
+          </div>
+          {jobs.slice(0,4).map(j => (
+            <div key={j.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+              padding:"10px 0", borderBottom:`1px solid #ffffff06` }}>
+              <div>
+                <div style={{ fontSize:13, color:C.ash, fontWeight:500 }}>{j.title.slice(0,36)}…</div>
+                <div style={{ fontSize:11, color:C.gray, marginTop:2 }}>{j.category}</div>
+              </div>
+              <Badge color={statusColor(j.status)}>{j.status}</Badge>
+            </div>
+          ))}
+          <Btn variant="subtle" onClick={() => setView("jobs")} style={{ width:"100%", marginTop:14, fontSize:12 }}>
+            View All Jobs →
+          </Btn>
+        </Card>
+        <Card>
+          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:13, fontWeight:700,
+            letterSpacing:"0.2em", textTransform:"uppercase", color:C.cyan, marginBottom:16 }}>
+            Top Workers
+          </div>
+          {workers.map((w,i) => (
+            <div key={w.id} style={{ display:"flex", alignItems:"center", gap:12,
+              padding:"10px 0", borderBottom:`1px solid #ffffff06` }}>
+              <div style={{ width:36, height:36, borderRadius:"50%",
+                background:`linear-gradient(135deg,${[C.gold,C.cyan,C.violet2,C.lime][i%4]},${C.ash}55)`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:16, fontWeight:700, color:"#000" }}>{w.name[0]}</div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:13, color:C.ash }}>{w.name}</div>
+                <div style={{ fontSize:11, color:C.gray }}>{w.skills[0]}</div>
+              </div>
+              <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:18, color:C.gold }}>
+                ₦{w.balance.toLocaleString()}
+              </div>
+            </div>
+          ))}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function AdminPostJob({ jobs, setJobs, showToast, setView }) {
+  const [title, setTitle] = useState("");
+  const [desc, setDesc] = useState("");
+  const [category, setCategory] = useState(SKILL_CATEGORIES[0]);
+  const [difficulty, setDifficulty] = useState("Intermediate");
+  const [pay, setPay] = useState("");
+  const [hours, setHours] = useState("72");
+  const [visibility, setVisibility] = useState("Public");
+  const [refNote, setRefNote] = useState("");
+
+  const handlePost = () => {
+    if (!title || !pay) { showToast("⚠️ Title and pay are required"); return; }
+    const job = {
+      id: "j"+Date.now(), title, description:desc, category, difficulty,
+      pay: parseFloat(pay), deadline: Date.now() + parseFloat(hours)*3600*1000,
+      status:"Open", submissions:[], visibility, refNote,
+      posted: Date.now(),
+    };
+    setJobs(p => [job, ...p]);
+    showToast("✅ Job posted successfully!");
+    setTitle(""); setDesc(""); setPay(""); setRefNote("");
+    setView("jobs");
+  };
+
+  return (
+    <div style={{ maxWidth:700 }}>
+      <Eyebrow color={C.gold}>Admin</Eyebrow>
+      <SectionTitle>Post a New Job</SectionTitle>
+      <GlowDivider />
+      <Card>
+        <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+          <Input label="Job Title" value={title} onChange={setTitle} placeholder="e.g. Key Animation — Redmask Scene 04" />
+          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            <label style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:12, fontWeight:700,
+              letterSpacing:"0.2em", textTransform:"uppercase", color:C.gray2 }}>Description & Instructions</label>
+            <textarea value={desc} onChange={e => setDesc(e.target.value)}
+              placeholder="Detailed job description, references, requirements..."
+              style={{ padding:"13px 15px", background:C.bg, border:`1px solid #ffffff10`,
+                borderBottom:`2px solid ${C.cyan}44`, borderRadius:8, color:C.ash,
+                fontFamily:"'Inter',sans-serif", fontSize:14, outline:"none", resize:"vertical",
+                minHeight:120 }} />
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+            <Select label="Skill Category" value={category} onChange={setCategory}
+              options={SKILL_CATEGORIES} accentColor={C.violet2} />
+            <Select label="Difficulty" value={difficulty} onChange={setDifficulty}
+              options={["Beginner","Intermediate","Expert"]} accentColor={C.gold} />
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16 }}>
+            <Input label="Pay (₦)" type="number" value={pay} onChange={setPay} placeholder="250" />
+            <Input label="Deadline (hours)" type="number" value={hours} onChange={setHours} placeholder="72" />
+            <Select label="Visibility" value={visibility} onChange={setVisibility}
+              options={["Public","Restricted"]} accentColor={C.teal} />
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            <label style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:12, fontWeight:700,
+              letterSpacing:"0.2em", textTransform:"uppercase", color:C.gray2 }}>Reference Notes</label>
+            <textarea value={refNote} onChange={e => setRefNote(e.target.value)}
+              placeholder="Style references, mood boards, example works..."
+              style={{ padding:"13px 15px", background:C.bg, border:`1px solid #ffffff10`,
+                borderBottom:`2px solid ${C.gold}44`, borderRadius:8, color:C.ash,
+                fontFamily:"'Inter',sans-serif", fontSize:14, outline:"none", resize:"vertical",
+                minHeight:80 }} />
+          </div>
+          {/* File upload placeholder */}
+          <div style={{ border:`2px dashed ${C.gold}33`, borderRadius:8, padding:"24px",
+            textAlign:"center", color:C.gray, fontSize:13 }}>
+            📎 Drag & drop reference files, images, PDFs · Max 50MB
+            <div style={{ fontSize:11, color:C.gray, marginTop:4 }}>
+              (Firebase Storage integration point)
+            </div>
+          </div>
+          <Btn onClick={handlePost} style={{ alignSelf:"flex-start", padding:"13px 40px" }}>
+            🔥 Post Job
+          </Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function AdminManageJobs({ jobs, setJobs, showToast }) {
+  const [filter, setFilter] = useState("All");
+  const statusFilters = ["All","Open","In Progress","Submitted","Approved","Expired"];
+  const filtered = filter === "All" ? jobs : jobs.filter(j => j.status === filter);
+
+  const deleteJob = id => {
+    setJobs(p => p.filter(j => j.id !== id));
+    showToast("Job removed.");
+  };
+
+  return (
+    <div>
+      <Eyebrow color={C.gold}>Admin</Eyebrow>
+      <SectionTitle>Manage Jobs</SectionTitle>
+      <GlowDivider />
+      <div style={{ display:"flex", gap:8, marginBottom:24, flexWrap:"wrap" }}>
+        {statusFilters.map(f => (
+          <button key={f} onClick={() => setFilter(f)}
+            style={{ padding:"7px 16px", fontFamily:"'Barlow Condensed',sans-serif",
+              fontSize:12, fontWeight:700, letterSpacing:"0.1em", textTransform:"uppercase",
+              background: filter===f ? `${C.gold}22` : C.sur,
+              color: filter===f ? C.gold : C.gray2,
+              border:`1px solid ${filter===f ? C.gold : "#ffffff10"}`,
+              borderRadius:4, cursor:"pointer", transition:"all .2s" }}>
+            {f}
+          </button>
+        ))}
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+        {filtered.map(j => <AdminJobRow key={j.id} job={j} onDelete={deleteJob} />)}
+        {filtered.length === 0 && (
+          <div style={{ textAlign:"center", padding:"60px 0", color:C.gray }}>
+            No jobs in this category
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AdminJobRow({ job, onDelete }) {
+  const [exp, setExp] = useState(false);
+  const rem = useCountdown(job.deadline);
+  return (
+    <Card style={{ padding:0, overflow:"hidden" }}>
+      <div style={{ padding:"16px 20px", display:"flex", alignItems:"center", gap:16, cursor:"pointer" }}
+        onClick={() => setExp(p => !p)}>
+        <div style={{ flex:1 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
+            <span style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:18, color:C.ash }}>{job.title}</span>
+          </div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <Badge color={C.violet2}>{job.category}</Badge>
+            <Badge color={diffColor(job.difficulty)}>{job.difficulty}</Badge>
+            <Badge color={statusColor(job.status)}>{job.status}</Badge>
+          </div>
+        </div>
+        <div style={{ textAlign:"right" }}>
+          <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:22, color:C.gold }}>₦{job.pay.toLocaleString()}</div>
+          <div style={{ fontSize:11, color: rem < 0 ? C.ember : rem < 3600 ? C.gold : C.gray,
+            fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:"0.1em" }}>
+            {rem < 0 ? "⚠️ EXPIRED" : `⏱ ${fmtTime(rem)}`}
+          </div>
+        </div>
+        <span style={{ color:C.gray, fontSize:18, transition:"transform .3s",
+          transform: exp ? "rotate(90deg)" : "rotate(0)" }}>›</span>
+      </div>
+      {exp && (
+        <div style={{ padding:"0 20px 20px", borderTop:`1px solid #ffffff08` }}>
+          <p style={{ fontSize:13, color:C.gray2, lineHeight:1.7, margin:"14px 0" }}>{job.description || "No description."}</p>
+          <div style={{ display:"flex", gap:10 }}>
+            <Btn variant="danger" onClick={() => onDelete(job.id)} style={{ fontSize:12, padding:"8px 16px" }}>
+              Delete Job
+            </Btn>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function AdminSubmissions({ jobs, setJobs, workers, setWorkers, showToast }) {
+  const submitted = jobs.filter(j => j.status === "Submitted");
+
+  const approve = (job) => {
+    setJobs(p => p.map(j => j.id === job.id ? { ...j, status:"Approved" } : j));
+    // Credit worker
+    const sub = job.submissions[job.submissions.length - 1];
+    if (sub) {
+      setWorkers(p => p.map(w => w.id === sub.workerId
+        ? { ...w, balance: w.balance + sub.pay,
+            history: [...w.history, { jobId:job.id, title:job.title, amount:sub.pay, date:Date.now(), status:"Approved" }] }
+        : w));
+    }
+    showToast(`✅ Approved! ₦${sub?.pay || job.pay} credited to worker.`);
+  };
+
+  const reject = (job) => {
+    setJobs(p => p.map(j => j.id === job.id ? { ...j, status:"Open", submissions:[] } : j));
+    showToast("❌ Submission rejected. Job reopened.");
+  };
+
+  return (
+    <div>
+      <Eyebrow color={C.cyan}>Admin</Eyebrow>
+      <SectionTitle>Review Submissions</SectionTitle>
+      <GlowDivider colors={[C.cyan, C.teal]} />
+      {submitted.length === 0 ? (
+        <Card style={{ textAlign:"center", padding:"60px 0" }}>
+          <div style={{ fontSize:40, marginBottom:12 }}>📥</div>
+          <div style={{ color:C.gray, fontSize:14 }}>No pending submissions</div>
+        </Card>
+      ) : submitted.map(job => {
+        const sub = job.submissions[job.submissions.length - 1];
+        return (
+          <Card key={job.id} style={{ marginBottom:16 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12 }}>
+              <div>
+                <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:20, color:C.ash, marginBottom:8 }}>{job.title}</div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <Badge color={C.violet2}>{job.category}</Badge>
+                  <Badge color={C.gold}>Submitted</Badge>
+                </div>
+              </div>
+              <div style={{ textAlign:"right" }}>
+                <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:24, color:C.gold }}>₦{sub?.pay || job.pay}</div>
+                <div style={{ fontSize:11, color:C.gray }}>Payment on approval</div>
+              </div>
+            </div>
+            {sub && (
+              <div style={{ marginTop:16, background:C.bg, borderRadius:8, padding:16 }}>
+                <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:11,
+                  letterSpacing:"0.2em", textTransform:"uppercase", color:C.gray, marginBottom:8 }}>
+                  Worker Notes
+                </div>
+                <p style={{ fontSize:13, color:C.gray2, lineHeight:1.6 }}>{sub.notes || "No notes provided."}</p>
+                {sub.late && (
+                  <div style={{ marginTop:8, padding:"6px 12px", background:`${C.ember}22`,
+                    border:`1px solid ${C.ember}55`, borderRadius:4, fontSize:12, color:C.ember }}>
+                    ⚠️ Late submission — Pay reduced to ₦{sub.pay}
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ display:"flex", gap:10, marginTop:16 }}>
+              <Btn onClick={() => approve(job)} style={{ flex:1 }}>✅ Approve & Pay</Btn>
+              <Btn variant="danger" onClick={() => reject(job)} style={{ flex:1 }}>❌ Reject</Btn>
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+function AdminWorkers({ workers }) {
+  return (
+    <div>
+      <Eyebrow color={C.teal}>Admin</Eyebrow>
+      <SectionTitle>Worker Management</SectionTitle>
+      <GlowDivider colors={[C.teal, C.cyan]} />
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:16 }}>
+        {workers.map((w, i) => (
+          <Card key={w.id} style={{ position:"relative", overflow:"hidden" }}>
+            <div style={{ position:"absolute", top:0, left:0, right:0, height:3,
+              background:`linear-gradient(90deg,${[C.gold,C.cyan,C.violet2,C.lime][i%4]},transparent)` }} />
+            <div style={{ display:"flex", gap:14, alignItems:"center", marginBottom:16 }}>
+              <div style={{ width:52, height:52, borderRadius:"50%",
+                background:`linear-gradient(135deg,${[C.gold,C.cyan,C.violet2,C.lime][i%4]},${C.ash}44)`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:22, fontWeight:700, color:"#000" }}>{w.name[0]}</div>
+              <div>
+                <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:18, color:C.ash }}>{w.name}</div>
+                <div style={{ fontSize:11, color:[C.gold,C.cyan,C.violet2,C.lime][i%4],
+                  fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:"0.1em", textTransform:"uppercase" }}>
+                  {w.skills[0]}
+                </div>
+              </div>
+            </div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:14 }}>
+              {w.skills.map(s => <Badge key={s} color={C.gray2}>{s}</Badge>)}
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div style={{ fontSize:13, color:C.gray }}>Balance</div>
+              <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:22, color:C.gold }}>
+                ₦{w.balance.toLocaleString()}
+              </div>
+            </div>
+            {w.bio && <div style={{ fontSize:12, color:C.gray, marginTop:10, lineHeight:1.6 }}>{w.bio}</div>}
+          </Card>
+        ))}
+        {workers.length === 0 && (
+          <div style={{ gridColumn:"1/-1", textAlign:"center", padding:"60px 0", color:C.gray }}>
+            No workers registered yet
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AdminAnalytics({ stats, jobs, workers }) {
+  const catCounts = {};
+  jobs.forEach(j => { catCounts[j.category] = (catCounts[j.category] || 0) + 1; });
+  const topCats = Object.entries(catCounts).sort((a,b) => b[1]-a[1]).slice(0,6);
+  const totalPay = jobs.reduce((s, j) => s + j.pay, 0);
+
+  return (
+    <div>
+      <Eyebrow color={C.violet2}>Admin</Eyebrow>
+      <SectionTitle>Studio Analytics</SectionTitle>
+      <GlowDivider colors={[C.violet2, C.pink]} />
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:16, marginBottom:28 }}>
+        {[
+          ["Total Job Value", `₦${totalPay.toLocaleString()}`, C.gold],
+          ["Completion Rate", `${stats.total ? Math.round(stats.approved/stats.total*100) : 0}%`, C.lime],
+          ["Avg Pay Per Job", `₦${stats.total ? Math.round(totalPay/stats.total) : 0}`, C.cyan],
+          ["Worker Count", workers.length, C.violet2],
+        ].map(([l,v,c]) => (
+          <Card key={l} glow={c} style={{ textAlign:"center" }}>
+            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:32, fontWeight:700,
+              background:`linear-gradient(135deg,${c},${C.ash})`,
+              WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>{v}</div>
+            <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:11,
+              letterSpacing:"0.2em", textTransform:"uppercase", color:C.gray, marginTop:4 }}>{l}</div>
+          </Card>
+        ))}
+      </div>
+      <Card>
+        <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:13, fontWeight:700,
+          letterSpacing:"0.2em", textTransform:"uppercase", color:C.violet2, marginBottom:20 }}>
+          Jobs by Category
+        </div>
+        {topCats.map(([cat, count]) => {
+          const pct = Math.round(count / jobs.length * 100);
+          return (
+            <div key={cat} style={{ marginBottom:14 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
+                <span style={{ fontSize:13, color:C.ash }}>{cat}</span>
+                <span style={{ fontSize:13, color:C.gold }}>{count} job{count>1?"s":""}</span>
+              </div>
+              <div style={{ height:4, background:C.sur2, borderRadius:2 }}>
+                <div style={{ height:"100%", borderRadius:2, width:`${pct}%`,
+                  background:`linear-gradient(90deg,${C.gold},${C.cyan})`,
+                  transition:"width 1s ease" }} />
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  WORKER DASHBOARD
+// ═══════════════════════════════════════════════════════════════
+function WorkerDashboard({ user, setUser, onLogout }) {
+  const [view, setView] = useState("board");
+  const [jobs, setJobs] = useState(SEED_JOBS);
+  const [activeJobs, setActiveJobs] = useState([]); // { job, deadline, pay }
+  const [toast, setToast] = useState(null);
+  const showToast = msg => setToast(msg);
+
+  const acceptJob = (job) => {
+    if (activeJobs.find(a => a.job.id === job.id)) { showToast("Already accepted!"); return; }
+    setJobs(p => p.map(j => j.id === job.id ? { ...j, status:"In Progress" } : j));
+    setActiveJobs(p => [...p, { job, deadline: job.deadline, startedAt: Date.now(), pay: job.pay }]);
+    showToast(`⚡ Job accepted! Countdown started.`);
+    setView("my-jobs");
+  };
+
+  const submitJob = (jobId, notes) => {
+    const active = activeJobs.find(a => a.job.id === jobId);
+    if (!active) return;
+    const now = Date.now();
+    const late = now > active.deadline;
+    const overSecs = late ? (now - active.deadline) / 1000 : 0;
+    // 2% penalty per 10 min over, min 20%
+    const penaltyPct = Math.min(0.8, Math.floor(overSecs / 600) * 0.02);
+    const finalPay = late ? Math.max(active.pay * 0.2, active.pay * (1 - penaltyPct)) : active.pay;
+    const sub = { workerId: user.id, notes, submittedAt: now, pay: Math.round(finalPay), late };
+    setJobs(p => p.map(j => j.id === jobId ? { ...j, status:"Submitted", submissions:[...j.submissions, sub] } : j));
+    setActiveJobs(p => p.filter(a => a.job.id !== jobId));
+    showToast(late
+      ? `📨 Submitted late — Pending review (₦${Math.round(finalPay)} due to lateness)`
+      : `📨 Submitted on time! Pending admin review.`);
+    setView("my-jobs");
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", position:"relative", zIndex:1 }}>
+      {/* Sidebar */}
+      <div style={{ position:"fixed", left:0, top:0, bottom:0, width:240,
+        background:"rgba(26,26,31,.98)", borderRight:`1px solid ${C.cyan}22`,
+        backdropFilter:"blur(20px)", zIndex:50, display:"flex", flexDirection:"column", padding:"0 0 20px" }}>
+        <div style={{ padding:"24px 20px", borderBottom:`1px solid #ffffff08`,
+          display:"flex", alignItems:"center", gap:10 }}>
+          <Logo size={28} />
+          <div>
+            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:15, fontWeight:700,
+              letterSpacing:"0.15em", color:C.ash }}>TURRIS FORGE</div>
+            <div style={{ fontSize:10, color:C.cyan, fontFamily:"'Barlow Condensed',sans-serif",
+              letterSpacing:"0.2em", textTransform:"uppercase" }}>Creative Portal</div>
+          </div>
+        </div>
+        <div style={{ padding:"16px 20px", borderBottom:`1px solid #ffffff08` }}>
+          <div style={{ width:44, height:44, borderRadius:"50%",
+            background:`linear-gradient(135deg,${C.cyan},${C.teal})`,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:20, fontWeight:700, color:"#000", marginBottom:8 }}>{user.name[0]}</div>
+          <div style={{ fontSize:14, color:C.ash, fontWeight:500 }}>{user.name}</div>
+          <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:22, color:C.gold, marginTop:4 }}>
+            ₦{user.balance.toLocaleString()}
+          </div>
+          <div style={{ fontSize:10, color:C.gray, fontFamily:"'Barlow Condensed',sans-serif",
+            letterSpacing:"0.15em", textTransform:"uppercase" }}>Balance</div>
+        </div>
+        <nav style={{ flex:1, padding:"8px 12px", display:"flex", flexDirection:"column", gap:2 }}>
+          {[["board","📋 Job Board"],["my-jobs","⚡ My Jobs"],["balance","💰 Balance"],["settings","⚙️ Settings"]].map(([v,l]) => (
+            <button key={v} onClick={() => setView(v)}
+              style={{ padding:"10px 12px", fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:13, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase",
+                textAlign:"left", background: view===v ? `${C.cyan}18` : "transparent",
+                color: view===v ? C.cyan : C.gray2, border:"none",
+                borderLeft: view===v ? `2px solid ${C.cyan}` : "2px solid transparent",
+                borderRadius:4, cursor:"pointer", transition:"all .25s" }}>
+              {l}
+              {v === "my-jobs" && activeJobs.length > 0 && (
+                <span style={{ marginLeft:6, background:C.ember, borderRadius:10, padding:"1px 6px",
+                  fontSize:10, color:"#fff" }}>{activeJobs.length}</span>
+              )}
+            </button>
+          ))}
+        </nav>
+        <div style={{ padding:"0 12px" }}>
+          <Btn variant="danger" onClick={onLogout} style={{ width:"100%", padding:"9px 12px", fontSize:12 }}>
+            ← Logout
+          </Btn>
+        </div>
+      </div>
+
+      <div style={{ marginLeft:240, padding:"28px 36px", minHeight:"100vh" }}>
+        {view === "board" && <WorkerJobBoard jobs={jobs} user={user} activeJobs={activeJobs} onAccept={acceptJob} />}
+        {view === "my-jobs" && <WorkerMyJobs jobs={jobs} activeJobs={activeJobs} user={user} onSubmit={submitJob} />}
+        {view === "balance" && <WorkerBalance user={user} />}
+        {view === "settings" && <WorkerSettings user={user} setUser={setUser} showToast={showToast} />}
+      </div>
+      {toast && <Toast msg={toast} onDone={() => setToast(null)} />}
+    </div>
+  );
+}
+
+function WorkerJobBoard({ jobs, user, activeJobs, onAccept }) {
+  const [catFilter, setCatFilter] = useState("All");
+  const [diffFilter, setDiffFilter] = useState("All");
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("pay-desc");
+
+  const mySkills = user.skills || [];
+  const activatedIds = activeJobs.map(a => a.job.id);
+
+  let filtered = jobs.filter(j => j.status === "Open");
+  if (catFilter !== "All") filtered = filtered.filter(j => j.category === catFilter);
+  if (diffFilter !== "All") filtered = filtered.filter(j => j.difficulty === diffFilter);
+  if (search) filtered = filtered.filter(j =>
+    j.title.toLowerCase().includes(search.toLowerCase()) ||
+    j.category.toLowerCase().includes(search.toLowerCase()));
+  filtered = [...filtered].sort((a,b) => {
+    if (sortBy === "pay-desc") return b.pay - a.pay;
+    if (sortBy === "pay-asc") return a.pay - b.pay;
+    if (sortBy === "deadline") return a.deadline - b.deadline;
+    return b.posted - a.posted;
+  });
+
+  return (
+    <div>
+      <Eyebrow color={C.cyan}>Creative Portal</Eyebrow>
+      <SectionTitle>Job Board</SectionTitle>
+      <GlowDivider colors={[C.cyan, C.teal]} />
+      {/* Filters */}
+      <div style={{ display:"flex", gap:12, marginBottom:24, flexWrap:"wrap", alignItems:"center" }}>
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="🔍 Search jobs..."
+          style={{ padding:"9px 14px", background:C.sur, border:`1px solid #ffffff10`,
+            borderRadius:6, color:C.ash, fontFamily:"'Inter',sans-serif", fontSize:13,
+            outline:"none", minWidth:200 }} />
+        <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
+          style={{ padding:"9px 14px", background:C.sur, border:`1px solid #ffffff10`,
+            borderRadius:6, color:C.ash, fontSize:13, outline:"none" }}>
+          <option value="All">All Categories</option>
+          {mySkills.length > 0 && <option value="_my">My Skills Only</option>}
+          {SKILL_CATEGORIES.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={diffFilter} onChange={e => setDiffFilter(e.target.value)}
+          style={{ padding:"9px 14px", background:C.sur, border:`1px solid #ffffff10`,
+            borderRadius:6, color:C.ash, fontSize:13, outline:"none" }}>
+          <option value="All">All Levels</option>
+          {["Beginner","Intermediate","Expert"].map(d => <option key={d}>{d}</option>)}
+        </select>
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+          style={{ padding:"9px 14px", background:C.sur, border:`1px solid #ffffff10`,
+            borderRadius:6, color:C.ash, fontSize:13, outline:"none" }}>
+          <option value="pay-desc">Highest Pay</option>
+          <option value="pay-asc">Lowest Pay</option>
+          <option value="deadline">Soonest Deadline</option>
+          <option value="newest">Newest</option>
+        </select>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))", gap:20 }}>
+        {filtered.map(job => (
+          <WorkerJobCard key={job.id} job={job} isActive={activatedIds.includes(job.id)}
+            isMySkill={mySkills.includes(job.category)} onAccept={onAccept} />
+        ))}
+        {filtered.length === 0 && (
+          <div style={{ gridColumn:"1/-1", textAlign:"center", padding:"80px 0", color:C.gray }}>
+            <div style={{ fontSize:40, marginBottom:12 }}>🔍</div>
+            No matching jobs found
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WorkerJobCard({ job, isActive, isMySkill, onAccept }) {
+  const [hov, setHov] = useState(false);
+  const rem = useCountdown(job.deadline);
+  const urgent = rem < 3600 * 6 && rem > 0;
+  return (
+    <div onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
+      style={{ background:C.sur, borderRadius:12, overflow:"hidden",
+        border:`1px solid ${hov ? C.gold+"44" : "#ffffff08"}`,
+        transform: hov ? "translateY(-8px)" : "none",
+        boxShadow: hov ? `0 20px 60px #00000066,0 0 40px ${C.gold}18` : "none",
+        transition:"all .4s", position:"relative" }}>
+      {/* Thumb */}
+      <div style={{ aspectRatio:"16/9", position:"relative", overflow:"hidden",
+        background:`linear-gradient(135deg,${C.bg},${C.sur2})`,
+        display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:36, fontWeight:700,
+          color:"#ffffff06", letterSpacing:"0.1em", textAlign:"center", padding:"0 16px" }}>
+          {job.category.toUpperCase()}
+        </div>
+        {isMySkill && (
+          <div style={{ position:"absolute", top:10, left:10, padding:"3px 8px",
+            background:`${C.gold}22`, border:`1px solid ${C.gold}66`, borderRadius:3,
+            fontFamily:"'Barlow Condensed',sans-serif", fontSize:10, letterSpacing:"0.15em",
+            textTransform:"uppercase", color:C.gold }}>⭐ Matches Your Skills</div>
+        )}
+        {urgent && (
+          <div style={{ position:"absolute", top:10, right:10, padding:"3px 8px",
+            background:`${C.ember}22`, border:`1px solid ${C.ember}`, borderRadius:3,
+            fontFamily:"'Barlow Condensed',sans-serif", fontSize:10, letterSpacing:"0.15em",
+            textTransform:"uppercase", color:C.ember, animation:"urgentPulse 1s ease-in-out infinite" }}>
+            🔥 URGENT
+          </div>
+        )}
+        {/* Synopsis overlay on hover */}
+        <div style={{ position:"absolute", inset:0, background:"rgba(13,13,15,.95)",
+          padding:16, transform: hov ? "translateY(0)" : "translateY(100%)",
+          transition:"transform .4s cubic-bezier(.4,0,.2,1)",
+          borderTop:`2px solid ${C.gold}`, display:"flex", flexDirection:"column",
+          justifyContent:"flex-end" }}>
+          <p style={{ fontSize:12, color:C.gray2, lineHeight:1.6, marginBottom:10 }}>
+            {job.description?.slice(0, 140) || "No description."}…
+          </p>
+          {job.refNote && (
+            <div style={{ fontSize:11, color:C.gold, fontStyle:"italic" }}>Ref: {job.refNote.slice(0,60)}</div>
+          )}
+        </div>
+      </div>
+      <div style={{ padding:18 }}>
+        <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:20, color:C.ash, marginBottom:10 }}>{job.title}</div>
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14 }}>
+          <Badge color={C.violet2}>{job.category}</Badge>
+          <Badge color={diffColor(job.difficulty)}>{job.difficulty}</Badge>
+        </div>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+          <div>
+            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:26, color:C.gold }}>₦{job.pay.toLocaleString()}</div>
+            <div style={{ fontSize:10, color:C.gray, fontFamily:"'Barlow Condensed',sans-serif",
+              letterSpacing:"0.1em", textTransform:"uppercase" }}>On Approval</div>
+          </div>
+          <div style={{ textAlign:"right" }}>
+            <div style={{ fontSize:13, color: urgent ? C.ember : C.gray2, fontFamily:"'Barlow Condensed',sans-serif" }}>
+              {fmtTime(rem)}
+            </div>
+            <div style={{ fontSize:10, color:C.gray, textTransform:"uppercase", letterSpacing:"0.1em" }}>Remaining</div>
+          </div>
+        </div>
+        {isActive
+          ? <Btn variant="subtle" style={{ width:"100%", cursor:"default" }}>✅ Already Accepted</Btn>
+          : <Btn onClick={() => onAccept(job)} style={{ width:"100%" }}>⚡ Accept Job</Btn>
+        }
+      </div>
+    </div>
+  );
+}
+
+function WorkerMyJobs({ jobs, activeJobs, user, onSubmit }) {
+  const [submitting, setSubmitting] = useState(null);
+  const [notes, setNotes] = useState("");
+  const mySubmitted = jobs.filter(j =>
+    (j.status === "Submitted" || j.status === "Approved") &&
+    j.submissions.some(s => s.workerId === user.id));
+
+  return (
+    <div>
+      <Eyebrow color={C.gold}>Creative Portal</Eyebrow>
+      <SectionTitle>My Jobs</SectionTitle>
+      <GlowDivider />
+
+      {activeJobs.length === 0 && mySubmitted.length === 0 && (
+        <Card style={{ textAlign:"center", padding:"60px 0" }}>
+          <div style={{ fontSize:40, marginBottom:12 }}>📋</div>
+          <div style={{ color:C.gray, marginBottom:16 }}>No active jobs yet</div>
+          <div style={{ fontSize:13, color:C.gray2 }}>Head to the Job Board to find work</div>
+        </Card>
+      )}
+
+      {activeJobs.length > 0 && (
+        <>
+          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:12, fontWeight:700,
+            letterSpacing:"0.3em", textTransform:"uppercase", color:C.gold, marginBottom:12 }}>
+            Active Jobs
+          </div>
+          {activeJobs.map(({ job, deadline, pay }) => (
+            <ActiveJobCard key={job.id} job={job} deadline={deadline} pay={pay}
+              onSubmit={() => setSubmitting(job.id)}
+              onConfirmSubmit={() => { onSubmit(job.id, notes); setSubmitting(null); setNotes(""); }}
+              submitting={submitting === job.id} notes={notes} setNotes={setNotes} />
+          ))}
+        </>
+      )}
+
+      {mySubmitted.length > 0 && (
+        <>
+          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:12, fontWeight:700,
+            letterSpacing:"0.3em", textTransform:"uppercase", color:C.cyan, marginBottom:12, marginTop:28 }}>
+            Submitted / Completed
+          </div>
+          {mySubmitted.map(j => {
+            const sub = j.submissions.find(s => s.workerId === user.id);
+            return (
+              <Card key={j.id} style={{ marginBottom:12 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div>
+                    <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:18, color:C.ash }}>{j.title}</div>
+                    <Badge color={statusColor(j.status)}>{j.status}</Badge>
+                    {sub?.late && <span style={{ marginLeft:8, fontSize:11, color:C.ember }}>Late submission</span>}
+                  </div>
+                  <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:22, color:C.gold }}>₦{sub?.pay || j.pay}</div>
+                </div>
+              </Card>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ActiveJobCard({ job, deadline, pay, onSubmit, onConfirmSubmit, submitting, notes, setNotes }) {
+  const rem = useCountdown(deadline);
+  const late = rem < 0;
+  const overSecs = late ? Math.abs(rem) : 0;
+  const penaltyPct = Math.min(0.8, Math.floor(overSecs / 600) * 0.02);
+  const currentPay = late ? Math.max(pay * 0.2, pay * (1 - penaltyPct)) : pay;
+  const urgentColor = late ? C.ember : rem < 3600 ? C.gold : rem < 3600 * 6 ? C.gold2 : C.cyan;
+
+  return (
+    <Card style={{ marginBottom:16, border:`1px solid ${urgentColor}33`,
+      boxShadow: late ? `0 0 30px ${C.ember}22` : rem < 3600 ? `0 0 30px ${C.gold}22` : "none" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12 }}>
+        <div style={{ flex:1 }}>
+          <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:20, color:C.ash, marginBottom:8 }}>{job.title}</div>
+          <div style={{ display:"flex", gap:8 }}>
+            <Badge color={C.violet2}>{job.category}</Badge>
+            <Badge color={diffColor(job.difficulty)}>{job.difficulty}</Badge>
+          </div>
+        </div>
+        {/* Big timer */}
+        <div style={{ textAlign:"center", background:`${urgentColor}11`, borderRadius:10,
+          padding:"12px 20px", border:`1px solid ${urgentColor}33` }}>
+          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:32, fontWeight:700,
+            color:urgentColor, letterSpacing:"0.1em", animation: late ? "timerPulse 1s ease-in-out infinite" : "none" }}>
+            {fmtTime(rem)}
+          </div>
+          <div style={{ fontSize:10, color:C.gray, textTransform:"uppercase", letterSpacing:"0.15em", marginTop:2 }}>
+            {late ? "OVERDUE" : "Time Remaining"}
+          </div>
+          {late && (
+            <div style={{ fontSize:11, color:C.ember, marginTop:4 }}>
+              Pay dropping: ₦{Math.round(currentPay)} (-{Math.round(penaltyPct*100)}%)
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Pay bar */}
+      <div style={{ marginTop:16, marginBottom:4 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+          <span style={{ fontSize:12, color:C.gray }}>Potential Pay</span>
+          <span style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:20, color: late ? C.ember : C.gold }}>
+            ₦{Math.round(currentPay).toLocaleString()} / ₦{pay.toLocaleString()}
+          </span>
+        </div>
+        <div style={{ height:3, background:C.sur2, borderRadius:2 }}>
+          <div style={{ height:"100%", borderRadius:2, transition:"width .5s",
+            width:`${Math.round(currentPay/pay*100)}%`,
+            background:`linear-gradient(90deg,${late ? C.ember : C.gold},${C.cyan})` }} />
+        </div>
+      </div>
+
+      {submitting ? (
+        <div style={{ marginTop:16, display:"flex", flexDirection:"column", gap:12 }}>
+          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:11, letterSpacing:"0.2em",
+            textTransform:"uppercase", color:C.gray2 }}>Submission Notes</div>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)}
+            placeholder="Describe your work, any notes for the admin, file links..."
+            style={{ padding:"13px 15px", background:C.bg, border:`1px solid #ffffff10`,
+              borderBottom:`2px solid ${C.cyan}66`, borderRadius:8, color:C.ash,
+              fontFamily:"'Inter',sans-serif", fontSize:14, outline:"none", resize:"vertical", minHeight:100 }} />
+          {/* File upload placeholder */}
+          <div style={{ border:`2px dashed ${C.cyan}33`, borderRadius:8, padding:"18px",
+            textAlign:"center", color:C.gray, fontSize:13 }}>
+            📁 Upload your work files here · (Firebase Storage)
+          </div>
+          <div style={{ display:"flex", gap:10 }}>
+            <Btn variant="subtle" onClick={() => setNotes("") || onSubmit(null)} style={{ flex:1 }}>Cancel</Btn>
+            <Btn onClick={onConfirmSubmit} style={{ flex:2 }}>📨 Submit for Review</Btn>
+          </div>
+        </div>
+      ) : (
+        <Btn onClick={onSubmit} style={{ marginTop:14, width:"100%" }}>
+          📤 Submit Work
+        </Btn>
+      )}
+    </Card>
+  );
+}
+
+function WorkerBalance({ user }) {
+  const history = user.history || [];
+  return (
+    <div>
+      <Eyebrow color={C.gold}>Creative Portal</Eyebrow>
+      <SectionTitle>My Balance</SectionTitle>
+      <GlowDivider />
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:16, marginBottom:28 }}>
+        {[
+          ["Current Balance", `₦${user.balance.toLocaleString()}`, C.gold],
+          ["Jobs Completed", history.filter(h => h.status === "Approved").length, C.lime],
+          ["Total Earned", `₦${history.reduce((s,h) => s + h.amount, 0).toLocaleString()}`, C.cyan],
+        ].map(([l,v,c]) => (
+          <Card key={l} glow={c} style={{ textAlign:"center" }}>
+            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:30, fontWeight:700,
+              background:`linear-gradient(135deg,${c},${C.ash})`,
+              WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>{v}</div>
+            <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:11,
+              letterSpacing:"0.2em", textTransform:"uppercase", color:C.gray, marginTop:4 }}>{l}</div>
+          </Card>
+        ))}
+      </div>
+      <Card>
+        <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:13, fontWeight:700,
+          letterSpacing:"0.2em", textTransform:"uppercase", color:C.gold, marginBottom:16 }}>
+          Payment History
+        </div>
+        {history.length === 0 ? (
+          <div style={{ textAlign:"center", padding:"40px 0", color:C.gray }}>
+            <div style={{ fontSize:32, marginBottom:8 }}>💰</div>
+            Complete your first job to see payment history
+          </div>
+        ) : history.map((h, i) => (
+          <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+            padding:"12px 0", borderBottom:`1px solid #ffffff06` }}>
+            <div>
+              <div style={{ fontSize:13, color:C.ash }}>{h.title}</div>
+              <div style={{ fontSize:11, color:C.gray, marginTop:2 }}>
+                {new Date(h.date).toLocaleDateString("en-NG", { day:"numeric", month:"short", year:"numeric" })}
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+              <Badge color={statusColor(h.status)}>{h.status}</Badge>
+              <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:20, color:C.gold }}>
+                +₦{h.amount.toLocaleString()}
+              </div>
+            </div>
+          </div>
+        ))}
+      </Card>
+      {/* Payout */}
+      <Card style={{ marginTop:16 }}>
+        <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:13, fontWeight:700,
+          letterSpacing:"0.2em", textTransform:"uppercase", color:C.cyan, marginBottom:16 }}>
+          Payout Details
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+          <Input label="Bank Name" value="" onChange={() => {}} placeholder="e.g. GTBank" />
+          <Input label="Account Number" value="" onChange={() => {}} placeholder="0123456789" />
+        </div>
+        <Btn style={{ marginTop:16 }}>Save Payout Details</Btn>
+      </Card>
+    </div>
+  );
+}
+
+function WorkerSettings({ user, setUser, showToast }) {
+  const [name, setName] = useState(user.name);
+  const [bio, setBio] = useState(user.bio || "");
+  const [portfolio, setPortfolio] = useState(user.portfolio || "");
+  const [selectedSkills, setSelectedSkills] = useState(user.skills || []);
+  const toggleSkill = s => setSelectedSkills(p => p.includes(s) ? p.filter(x => x !== s) : [...p, s]);
+  const save = () => { setUser(p => ({ ...p, name, bio, portfolio, skills:selectedSkills })); showToast("✅ Profile updated!"); };
+
+  return (
+    <div style={{ maxWidth:640 }}>
+      <Eyebrow color={C.gray2}>Creative Portal</Eyebrow>
+      <SectionTitle>Settings</SectionTitle>
+      <GlowDivider colors={[C.gray, C.cyan]} />
+      <Card style={{ marginBottom:16 }}>
+        <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:12, fontWeight:700,
+          letterSpacing:"0.3em", textTransform:"uppercase", color:C.violet2, marginBottom:16 }}>
+          Profile
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <Input label="Display Name" value={name} onChange={setName} placeholder="Your forge name" />
+          <Input label="Bio" value={bio} onChange={setBio} placeholder="Your creative background..." />
+          <Input label="Portfolio URL" value={portfolio} onChange={setPortfolio} placeholder="https://artstation.com/you" />
+        </div>
+      </Card>
+      <Card style={{ marginBottom:16 }}>
+        <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:12, fontWeight:700,
+          letterSpacing:"0.3em", textTransform:"uppercase", color:C.gold, marginBottom:16 }}>
+          My Skill Categories
+        </div>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+          {SKILL_CATEGORIES.map(s => (
+            <button key={s} onClick={() => toggleSkill(s)}
+              style={{ padding:"6px 12px", fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:12, letterSpacing:"0.1em", textTransform:"uppercase",
+                background: selectedSkills.includes(s) ? `${C.gold}22` : C.sur2,
+                color: selectedSkills.includes(s) ? C.gold : C.gray2,
+                border:`1px solid ${selectedSkills.includes(s) ? C.gold : "#ffffff10"}`,
+                borderRadius:4, cursor:"pointer", transition:"all .2s" }}>
+              {s}
+            </button>
+          ))}
+        </div>
+      </Card>
+      <Card style={{ marginBottom:16 }}>
+        <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:12, fontWeight:700,
+          letterSpacing:"0.3em", textTransform:"uppercase", color:C.cyan, marginBottom:16 }}>
+          Account
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <Input label="New Password" type="password" value="" onChange={() => {}} placeholder="Leave blank to keep current" />
+          <Input label="Confirm Password" type="password" value="" onChange={() => {}} placeholder="Confirm new password" />
+        </div>
+      </Card>
+      <Btn onClick={save} style={{ padding:"13px 40px" }}>💾 Save Changes</Btn>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MAIN APP
+// ═══════════════════════════════════════════════════════════════
+export default function App() {
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(null);
+
+  const handleAuth = useCallback((u) => setUser(u), []);
+  const handleLogout = useCallback(() => setUser(null), []);
+  const handleLoaded = useCallback(() => setLoading(false), []);
+
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@300;400;500;600&family=Barlow+Condensed:wght@400;600;700;900&display=swap');
+        *{margin:0;padding:0;box-sizing:border-box}
+        html,body{width:100%;min-height:100%;background:#0D0D0F;color:#E8E4DC;font-family:'Inter',sans-serif;overflow-x:hidden}
+        ::-webkit-scrollbar{width:4px}
+        ::-webkit-scrollbar-track{background:#0D0D0F}
+        ::-webkit-scrollbar-thumb{background:#E8912A66;border-radius:2px}
+        @keyframes shimmer{0%,100%{background-position:0%}50%{background-position:100%}}
+        @keyframes authBar{0%{background-position:0%}100%{background-position:200%}}
+        @keyframes toastIn{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+        @keyframes urgentPulse{0%,100%{opacity:1}50%{opacity:.5}}
+        @keyframes timerPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.7;transform:scale(.97)}}
+        select option{background:#1A1A1F}
+        textarea{font-family:'Inter',sans-serif}
+      `}</style>
+
+      <ParticleCanvas />
+
+      {/* Full-page background gradient */}
+      <div style={{ position:"fixed", inset:0, zIndex:0, pointerEvents:"none",
+        background:`radial-gradient(ellipse 80% 80% at 50% -10%,${C.gold}0a 0%,transparent 60%)` }} />
+
+      {loading && <LoadingScreen onDone={handleLoaded} />}
+
+      {!loading && !user && <AuthScreen onAuth={handleAuth} />}
+
+      {!loading && user && user.role === "admin" && (
+        <AdminDashboard user={user} onLogout={handleLogout} />
+      )}
+
+      {!loading && user && user.role === "worker" && (
+        <WorkerDashboard user={user} setUser={setUser} onLogout={handleLogout} />
+      )}
+    </>
+  );
+}
