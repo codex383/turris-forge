@@ -1,10 +1,32 @@
 import { useState } from "react";
 import { C } from "../../data/seed";
 import { Eyebrow, SectionTitle, GlowDivider, Badge, Card, Btn, diffColor } from "../shared";
+import { MessagingPanel } from "../MessagingPanel";
 import type { Job, Worker } from "../../types";
 
-function SubmissionCard({ job, workers, onApprove, onReject }: { job: Job; workers: Worker[]; onApprove: () => void; onReject: () => void }) {
+function StarPicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const [hover, setHover] = useState(0);
+  return (
+    <div style={{ display: "flex", gap: 3 }}>
+      {[1,2,3,4,5].map(i => (
+        <button key={i}
+          onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(0)}
+          onClick={() => onChange(i)}
+          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, color: i <= (hover || value) ? C.gold : C.sur2, transition: "color .1s", padding: 0 }}
+        >★</button>
+      ))}
+    </div>
+  );
+}
+
+function SubmissionCard({ job, workers, onApprove, onReject, onMessage }: {
+  job: Job; workers: Worker[];
+  onApprove: (rating: number) => void;
+  onReject: () => void;
+  onMessage: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [rating, setRating] = useState(0);
   const sub = job.submissions[job.submissions.length - 1];
   const worker = workers.find(w => w.id === sub?.workerId);
 
@@ -12,7 +34,6 @@ function SubmissionCard({ job, workers, onApprove, onReject }: { job: Job; worke
     <Card style={{ marginBottom: 16, border: `1px solid ${C.cyan}22`, position: "relative", overflow: "hidden" }}>
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg,${C.cyan},${C.teal},transparent)` }} />
 
-      {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
@@ -28,7 +49,6 @@ function SubmissionCard({ job, workers, onApprove, onReject }: { job: Job; worke
         </div>
       </div>
 
-      {/* Worker Info */}
       {worker && (
         <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 12, background: C.bg, borderRadius: 8, padding: "10px 14px" }}>
           <div style={{ width: 36, height: 36, borderRadius: "50%", background: `linear-gradient(135deg,${C.cyan},${C.teal})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700, color: "#000", flexShrink: 0 }}>{worker.name[0]}</div>
@@ -39,13 +59,16 @@ function SubmissionCard({ job, workers, onApprove, onReject }: { job: Job; worke
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 11, color: C.gray }}>Worker Balance</div>
-            <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 18, color: C.gold }}>₦{worker.balance.toLocaleString()}</div>
+            <div style={{ fontSize: 11, color: C.gray }}>Rating</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 3, justifyContent: "flex-end" }}>
+              <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 18, color: C.gold }}>{worker.rating > 0 ? worker.rating.toFixed(1) : "—"}</span>
+              <span style={{ color: C.gold, fontSize: 13 }}>★</span>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Submission Notes */}
+      {/* Submission Notes + Files */}
       {sub && (
         <div style={{ marginTop: 14 }}>
           <button onClick={() => setExpanded(p => !p)} style={{
@@ -54,35 +77,73 @@ function SubmissionCard({ job, workers, onApprove, onReject }: { job: Job; worke
             cursor: "pointer", color: C.ash, fontFamily: "'Barlow Condensed',sans-serif",
             fontSize: 12, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase",
           }}>
-            <span>📋 Submission Notes & Details</span>
+            <span>📋 Submission Notes & Files {sub.files?.length ? `(${sub.files.length} file${sub.files.length > 1 ? "s" : ""})` : ""}</span>
             <span style={{ color: C.cyan, transition: "transform .3s", display: "inline-block", transform: expanded ? "rotate(90deg)" : "none" }}>›</span>
           </button>
           {expanded && (
             <div style={{ background: C.bg, border: `1px solid #ffffff08`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: "14px 14px" }}>
               <div style={{ fontSize: 13, color: C.gray2, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-                {sub.notes || <em style={{ color: C.gray }}>No notes provided by the worker.</em>}
+                {sub.notes || <em style={{ color: C.gray }}>No notes provided.</em>}
               </div>
-              {sub.late && (
-                <div style={{ marginTop: 12, padding: "10px 14px", background: `${C.ember}18`, border: `1px solid ${C.ember}44`, borderRadius: 6, fontSize: 12, color: C.ember, lineHeight: 1.5 }}>
-                  ⚠️ <strong>Late submission.</strong> Pay reduced from ₦{job.pay.toLocaleString()} → ₦{sub.pay.toLocaleString()}
+              {/* Attached files */}
+              {sub.files && sub.files.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 10, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: C.gray, marginBottom: 8 }}>Attached Files</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {sub.files.map((f, fi) => (
+                      f.type.startsWith("image") ? (
+                        <a key={fi} href={f.dataUrl} download={f.name} title={f.name}>
+                          <img src={f.dataUrl} alt={f.name} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6, border: `1px solid ${C.cyan}33`, cursor: "pointer" }} />
+                        </a>
+                      ) : (
+                        <a key={fi} href={f.dataUrl} download={f.name} style={{ padding: "8px 12px", background: C.sur2, borderRadius: 6, border: `1px solid #ffffff10`, fontSize: 12, color: C.gray2, textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
+                          📎 {f.name}
+                        </a>
+                      )
+                    ))}
+                  </div>
                 </div>
               )}
-              <div style={{ marginTop: 12, border: `2px dashed ${C.cyan}22`, borderRadius: 8, padding: "18px", textAlign: "center", color: C.gray, fontSize: 12 }}>
-                📁 Submitted files & assets appear here (Firebase Storage integration)
-              </div>
-              <div style={{ marginTop: 10, fontSize: 11, color: C.gray, display: "flex", gap: 20 }}>
-                <span>Submitted: {sub.submittedAt ? new Date(sub.submittedAt).toLocaleString("en-NG") : "—"}</span>
-                <span>Job Pay: ₦{job.pay.toLocaleString()}</span>
-                <span>Final Pay: ₦{sub.pay.toLocaleString()}</span>
+              {sub.late && (
+                <div style={{ marginTop: 12, padding: "10px 14px", background: `${C.ember}18`, border: `1px solid ${C.ember}44`, borderRadius: 6, fontSize: 12, color: C.ember, lineHeight: 1.5 }}>
+                  ⚠️ <strong>Late submission.</strong> Pay reduced ₦{job.pay.toLocaleString()} → ₦{sub.pay.toLocaleString()}
+                </div>
+              )}
+              <div style={{ marginTop: 10, fontSize: 11, color: C.gray }}>
+                Submitted: {sub.submittedAt ? new Date(sub.submittedAt).toLocaleString("en-NG") : "—"} · Final pay: ₦{sub.pay.toLocaleString()}
               </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Actions */}
-      <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-        <Btn onClick={onApprove} style={{ flex: 2 }}>✅ Approve & Credit Payment</Btn>
+      {/* Chat button */}
+      <button onClick={onMessage} style={{
+        marginTop: 12, padding: "7px 14px",
+        background: (job.messages || []).some(m => m.fromRole === "worker" && !m.read) ? `${C.gold}22` : C.sur,
+        border: `1px solid ${(job.messages || []).some(m => m.fromRole === "worker" && !m.read) ? C.gold + "55" : "#ffffff10"}`,
+        borderRadius: 7, cursor: "pointer",
+        color: (job.messages || []).some(m => m.fromRole === "worker" && !m.read) ? C.gold : C.gray2,
+        fontFamily: "'Barlow Condensed',sans-serif", fontSize: 11, fontWeight: 700,
+        letterSpacing: "0.1em", display: "flex", alignItems: "center", gap: 6,
+        transition: "all .2s",
+      }}>
+        💬 Chat with Worker
+        {(job.messages || []).length > 0 && <span style={{ fontSize: 10, color: C.gray }}>({(job.messages || []).length} msgs)</span>}
+      </button>
+
+      {/* Rating + Actions */}
+      <div style={{ marginTop: 14, padding: "12px 14px", background: C.bg, borderRadius: 8, border: `1px solid #ffffff06` }}>
+        <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: C.gray, marginBottom: 8 }}>Rate This Worker's Performance</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <StarPicker value={rating} onChange={setRating} />
+          {rating > 0 && <span style={{ fontSize: 12, color: C.gold }}>{["","Poor","Fair","Good","Great","Excellent"][rating]}</span>}
+        </div>
+        <div style={{ fontSize: 11, color: C.gray, marginTop: 6 }}>Rating saves with approval ({rating}/5 stars)</div>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+        <Btn onClick={() => onApprove(rating)} style={{ flex: 2 }}>✅ Approve & Credit ₦{(sub?.pay || job.pay).toLocaleString()}</Btn>
         <Btn variant="danger" onClick={onReject} style={{ flex: 1 }}>✕ Reject</Btn>
       </div>
     </Card>
@@ -96,30 +157,54 @@ export function AdminSubmissions({ jobs, setJobs, workers, setWorkers, showToast
   setWorkers: (fn: (p: Worker[]) => Worker[]) => void;
   showToast: (m: string) => void;
 }) {
-  const [filter, setFilter] = useState<"pending" | "approved" | "rejected">("pending");
+  const [filter, setFilter] = useState<"pending" | "approved">("pending");
+  const [chatJob, setChatJob] = useState<Job | null>(null);
+  const adminUser = { id: "admin1", name: "Admin" };
 
   const submitted = jobs.filter(j => j.status === "Submitted");
   const approved  = jobs.filter(j => j.status === "Approved" && j.submissions.length > 0);
 
-  const approve = (job: Job) => {
+  const approve = (job: Job, rating: number) => {
     setJobs(p => p.map(j => j.id === job.id ? { ...j, status: "Approved" } : j));
     const sub = job.submissions[job.submissions.length - 1];
     if (sub) {
-      setWorkers(p => p.map(w => w.id === sub.workerId
-        ? { ...w, balance: w.balance + sub.pay, history: [...w.history, { jobId: job.id, title: job.title, amount: sub.pay, date: Date.now(), status: "Approved" }] }
-        : w));
+      setWorkers(p => p.map(w => {
+        if (w.id !== sub.workerId) return w;
+        const newCount = (w.ratingCount || 0) + (rating > 0 ? 1 : 0);
+        const newRating = rating > 0
+          ? ((w.rating || 0) * (w.ratingCount || 0) + rating) / newCount
+          : w.rating;
+        return {
+          ...w,
+          balance: w.balance + sub.pay,
+          rating: Math.round(newRating * 10) / 10,
+          ratingCount: newCount,
+          history: [...w.history, { jobId: job.id, title: job.title, amount: sub.pay, date: Date.now(), status: "Approved" }],
+        };
+      }));
     }
-    showToast(`✅ Approved! ₦${(sub?.pay || job.pay).toLocaleString()} credited to ${workers.find(w => w.id === sub?.workerId)?.name || "worker"}.`);
+    const worker = workers.find(w => w.id === sub?.workerId);
+    showToast(`✅ Approved! ₦${(sub?.pay || job.pay).toLocaleString()} credited to ${worker?.name || "worker"}.`);
   };
 
   const reject = (job: Job) => {
     setJobs(p => p.map(j => j.id === job.id ? { ...j, status: "Open", submissions: [] } : j));
-    showToast("❌ Submission rejected — job is reopened for bids.");
+    showToast("❌ Submission rejected — job reopened.");
   };
 
-  const tabs: { key: typeof filter; label: string; count: number }[] = [
-    { key: "pending",  label: "Pending Review", count: submitted.length },
-    { key: "approved", label: "Approved",        count: approved.length  },
+  const sendMessage = (jobId: string, text: string) => {
+    const msg = { id: "m" + Date.now(), from: adminUser.id, fromName: adminUser.name, fromRole: "admin" as const, text, at: Date.now(), read: false };
+    setJobs(p => p.map(j => j.id === jobId ? { ...j, messages: [...(j.messages || []), msg] } : j));
+    if (chatJob) setChatJob(prev => prev ? { ...prev, messages: [...(prev.messages || []), msg] } : prev);
+  };
+
+  const markRead = (jobId: string) => {
+    setJobs(p => p.map(j => j.id === jobId ? { ...j, messages: (j.messages || []).map(m => m.fromRole === "worker" ? { ...m, read: true } : m) } : j));
+  };
+
+  const tabs = [
+    { key: "pending" as const,  label: "Pending Review", count: submitted.length },
+    { key: "approved" as const, label: "Approved",        count: approved.length  },
   ];
 
   return (
@@ -128,21 +213,15 @@ export function AdminSubmissions({ jobs, setJobs, workers, setWorkers, showToast
       <SectionTitle>Submitted Projects</SectionTitle>
       <GlowDivider colors={[C.cyan, C.teal]} />
 
-      {/* Summary strip */}
       <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
-        {[
-          ["Awaiting Review", submitted.length, C.gold],
-          ["Approved",        approved.length, C.lime],
-          ["Total Submissions", jobs.filter(j => j.submissions.length > 0).length, C.cyan],
-        ].map(([l, v, c]) => (
-          <div key={String(l)} style={{ background: C.sur, border: `1px solid #ffffff08`, borderRadius: 8, padding: "12px 18px", display: "flex", gap: 12, alignItems: "center" }}>
-            <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, color: String(c) }}>{v}</div>
+        {([["Awaiting Review", submitted.length, C.gold], ["Approved", approved.length, C.lime], ["Total Submissions", jobs.filter(j => j.submissions.length > 0).length, C.cyan]] as [string,number,string][]).map(([l, v, c]) => (
+          <div key={l} style={{ background: C.sur, border: `1px solid #ffffff08`, borderRadius: 8, padding: "12px 18px", display: "flex", gap: 12, alignItems: "center" }}>
+            <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, color: c }}>{v}</div>
             <div style={{ fontSize: 11, color: C.gray, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.12em", textTransform: "uppercase" }}>{l}</div>
           </div>
         ))}
       </div>
 
-      {/* Tabs */}
       <div style={{ display: "flex", gap: 0, background: C.bg, borderRadius: 8, padding: 3, marginBottom: 22, width: "fit-content", border: `1px solid #ffffff08` }}>
         {tabs.map(({ key, label, count }) => (
           <button key={key} onClick={() => setFilter(key)} style={{
@@ -153,25 +232,26 @@ export function AdminSubmissions({ jobs, setJobs, workers, setWorkers, showToast
             display: "flex", alignItems: "center", gap: 7,
           }}>
             {label}
-            {count > 0 && <span style={{ background: filter === key ? C.cyan : C.gray, borderRadius: 10, padding: "1px 7px", fontSize: 10, color: "#000", fontFamily: "'Inter',sans-serif" }}>{count}</span>}
+            {count > 0 && <span style={{ background: filter === key ? C.cyan : C.gray, borderRadius: 10, padding: "1px 7px", fontSize: 10, color: "#000" }}>{count}</span>}
           </button>
         ))}
       </div>
 
-      {/* Pending */}
       {filter === "pending" && (
         submitted.length === 0 ? (
           <Card style={{ textAlign: "center", padding: "60px 0" }}>
             <div style={{ fontSize: 42, marginBottom: 12 }}>📥</div>
             <div style={{ color: C.gray, fontSize: 14 }}>No pending submissions</div>
-            <div style={{ color: C.gray2, fontSize: 12, marginTop: 6 }}>Approved workers will appear here once they submit their work</div>
           </Card>
         ) : submitted.map(job => (
-          <SubmissionCard key={job.id} job={job} workers={workers} onApprove={() => approve(job)} onReject={() => reject(job)} />
+          <SubmissionCard key={job.id} job={job} workers={workers}
+            onApprove={(rating) => { approve(job, rating); }}
+            onReject={() => reject(job)}
+            onMessage={() => { markRead(job.id); setChatJob(jobs.find(j => j.id === job.id) || job); }}
+          />
         ))
       )}
 
-      {/* Approved */}
       {filter === "approved" && (
         approved.length === 0 ? (
           <Card style={{ textAlign: "center", padding: "60px 0" }}>
@@ -187,26 +267,42 @@ export function AdminSubmissions({ jobs, setJobs, workers, setWorkers, showToast
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
                 <div>
                   <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 18, color: C.ash, marginBottom: 6 }}>{job.title}</div>
-                  <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     <Badge color={C.violet2}>{job.category}</Badge>
                     <Badge color={C.lime}>✓ Approved</Badge>
+                    {worker && <span style={{ fontSize: 11, color: C.gray }}>by {worker.name}</span>}
                   </div>
-                  {worker && <div style={{ fontSize: 12, color: C.gray, marginTop: 6 }}>Worker: <span style={{ color: C.ash }}>{worker.name}</span></div>}
+                  {sub?.files && sub.files.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                      {sub.files.map((f, fi) => f.type.startsWith("image")
+                        ? <img key={fi} src={f.dataUrl} alt={f.name} style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, border: `1px solid #ffffff10` }} />
+                        : <span key={fi} style={{ fontSize: 10, color: C.gray }}>📎 {f.name}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 24, color: C.lime }}>₦{(sub?.pay || job.pay).toLocaleString()}</div>
-                  <div style={{ fontSize: 11, color: C.gray }}>credited to worker</div>
-                  {sub?.submittedAt && <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>{new Date(sub.submittedAt).toLocaleDateString()}</div>}
+                  <div style={{ fontSize: 11, color: C.gray }}>credited</div>
+                  {worker && worker.rating > 0 && (
+                    <div style={{ fontSize: 12, color: C.gold, marginTop: 4 }}>★ {worker.rating.toFixed(1)}</div>
+                  )}
                 </div>
               </div>
-              {sub?.notes && (
-                <div style={{ marginTop: 12, padding: "10px 14px", background: C.bg, borderRadius: 6, fontSize: 12, color: C.gray2, lineHeight: 1.6, borderLeft: `3px solid ${C.lime}44` }}>
-                  {sub.notes}
-                </div>
-              )}
             </Card>
           );
         })
+      )}
+
+      {chatJob && (
+        <MessagingPanel
+          job={chatJob}
+          currentUserId={adminUser.id}
+          currentUserName={adminUser.name}
+          currentUserRole="admin"
+          onSend={sendMessage}
+          onClose={() => setChatJob(null)}
+        />
       )}
     </div>
   );

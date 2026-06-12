@@ -4,6 +4,14 @@ export interface Submission {
   submittedAt: number;
   pay: number;
   late: boolean;
+  files: UploadedFile[];
+}
+
+export interface UploadedFile {
+  name: string;
+  size: number;
+  type: string;
+  dataUrl: string;
 }
 
 export interface Job {
@@ -19,6 +27,17 @@ export interface Job {
   visibility: string;
   posted: number;
   refNote?: string;
+  messages: Message[];
+}
+
+export interface Message {
+  id: string;
+  from: string;
+  fromName: string;
+  fromRole: "worker" | "admin";
+  text: string;
+  at: number;
+  read: boolean;
 }
 
 export interface PaymentRecord {
@@ -40,6 +59,8 @@ export interface Worker {
   bio: string;
   portfolio: string;
   history: PaymentRecord[];
+  rating: number;
+  ratingCount: number;
 }
 
 export interface ActiveJob {
@@ -47,4 +68,13 @@ export interface ActiveJob {
   deadline: number;
   startedAt: number;
   pay: number;
+}
+
+export interface Notification {
+  id: string;
+  text: string;
+  at: number;
+  read: boolean;
+  jobId?: string;
+  type: "job_match" | "approved" | "rejected" | "message" | "submitted";
 }

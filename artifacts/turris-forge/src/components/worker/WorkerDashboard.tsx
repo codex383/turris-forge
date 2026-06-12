@@ -3,26 +3,33 @@ import { C } from "../../data/seed";
 import { Logo } from "../Logo";
 import { Btn } from "../shared";
 import { Toast } from "../Toast";
+import { NotificationBell } from "../NotificationBell";
+import { Leaderboard } from "../Leaderboard";
 import { WorkerJobBoard } from "./WorkerJobBoard";
 import { WorkerMyJobs } from "./WorkerMyJobs";
 import { WorkerBalance } from "./WorkerBalance";
 import { WorkerSettings } from "./WorkerSettings";
-import type { Job, ActiveJob, Worker } from "../../types";
+import type { Job, ActiveJob, Worker, Notification, UploadedFile } from "../../types";
 
 const NAV = [
-  { id: "board",    icon: "◈", label: "Job Board" },
-  { id: "my-jobs",  icon: "⚡", label: "My Jobs"   },
-  { id: "balance",  icon: "₦", label: "Balance"   },
-  { id: "settings", icon: "⚙", label: "Settings"  },
+  { id: "board",       icon: "◈", label: "Job Board"  },
+  { id: "my-jobs",     icon: "⚡", label: "My Jobs"    },
+  { id: "balance",     icon: "₦", label: "Balance"    },
+  { id: "leaderboard", icon: "🏆", label: "Leaderboard"},
+  { id: "settings",    icon: "⚙", label: "Settings"   },
 ];
 const NAV_IDS = NAV.map(n => n.id);
 
-export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout }: {
+export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout, notifications, onMarkNotifRead, onClearNotifs, allWorkers }: {
   user: Worker;
   setUser: (fn: (p: Worker) => Worker) => void;
   jobs: Job[];
   setJobs: (fn: (p: Job[]) => Job[]) => void;
   onLogout: () => void;
+  notifications: Notification[];
+  onMarkNotifRead: (id: string) => void;
+  onClearNotifs: () => void;
+  allWorkers: Worker[];
 }) {
   const [view, setView] = useState("board");
   const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([]);
@@ -47,7 +54,7 @@ export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout }: {
     navigate("my-jobs");
   };
 
-  const submitJob = (jobId: string, notes: string) => {
+  const submitJob = (jobId: string, notes: string, files: UploadedFile[]) => {
     const active = activeJobs.find(a => a.job.id === jobId);
     if (!active) return;
     const now = Date.now();
@@ -55,7 +62,7 @@ export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout }: {
     const overSecs = late ? (now - active.deadline) / 1000 : 0;
     const penaltyPct = Math.min(0.8, Math.floor(overSecs / 600) * 0.02);
     const finalPay = late ? Math.max(active.pay * 0.2, active.pay * (1 - penaltyPct)) : active.pay;
-    const sub = { workerId: user.id, notes, submittedAt: now, pay: Math.round(finalPay), late };
+    const sub = { workerId: user.id, notes, submittedAt: now, pay: Math.round(finalPay), late, files };
     setJobs(p => p.map(j => j.id === jobId ? { ...j, status: "Submitted", submissions: [...j.submissions, sub] } : j));
     setActiveJobs(p => p.filter(a => a.job.id !== jobId));
     showToast(late
@@ -64,9 +71,15 @@ export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout }: {
     navigate("my-jobs");
   };
 
+  const sendMessage = (jobId: string, text: string) => {
+    const msg = { id: "m" + Date.now(), from: user.id, fromName: user.name, fromRole: "worker" as const, text, at: Date.now(), read: false };
+    setJobs(p => p.map(j => j.id === jobId ? { ...j, messages: [...(j.messages || []), msg] } : j));
+  };
+
   const mySubmitted = jobs.filter(j => j.status === "Submitted" && j.submissions.some(s => s.workerId === user.id));
   const myApproved  = jobs.filter(j => j.status === "Approved"  && j.submissions.some(s => s.workerId === user.id));
   const fromX = direction === "forward" ? "28px" : "-28px";
+  const unreadMsgs = jobs.reduce((n, j) => n + (j.messages || []).filter(m => m.fromRole === "admin" && !m.read).length, 0);
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", position: "relative", zIndex: 1 }}>
@@ -74,13 +87,10 @@ export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout }: {
       {/* ── SIDEBAR ── */}
       <aside style={{
         position: "fixed", left: 0, top: 0, bottom: 0, width: 218,
-        background: "rgba(10,10,13,.98)",
-        borderRight: `1px solid ${C.cyan}18`,
-        backdropFilter: "blur(20px)",
-        zIndex: 50, display: "flex", flexDirection: "column",
-        boxShadow: `4px 0 40px #00000055`,
+        background: "rgba(10,10,13,.98)", borderRight: `1px solid ${C.cyan}18`,
+        backdropFilter: "blur(20px)", zIndex: 50,
+        display: "flex", flexDirection: "column", boxShadow: `4px 0 40px #00000055`,
       }}>
-        {/* Brand */}
         <div style={{ padding: "20px 18px 16px", borderBottom: `1px solid #ffffff07`, display: "flex", alignItems: "center", gap: 10 }}>
           <Logo size={26} />
           <div>
@@ -89,76 +99,53 @@ export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout }: {
           </div>
         </div>
 
-        {/* Profile + Live Balance */}
         <div style={{ padding: "14px 18px 14px", borderBottom: `1px solid #ffffff07` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-            <div style={{
-              width: 42, height: 42, borderRadius: "50%",
-              background: `linear-gradient(135deg,${C.cyan},${C.teal})`,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 18, fontWeight: 700, color: "#000", flexShrink: 0,
-              boxShadow: `0 0 14px ${C.cyan}44`,
-            }}>{user.name[0]}</div>
+            <div style={{ width: 42, height: 42, borderRadius: "50%", background: `linear-gradient(135deg,${C.cyan},${C.teal})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700, color: "#000", flexShrink: 0, boxShadow: `0 0 14px ${C.cyan}44` }}>{user.name[0]}</div>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 13, color: C.ash, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user.name}</div>
               <div style={{ fontSize: 9, color: C.cyan, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.15em", textTransform: "uppercase", marginTop: 1 }}>Creative</div>
             </div>
           </div>
-          {/* Balance card */}
           <div style={{ background: `${C.gold}0d`, border: `1px solid ${C.gold}22`, borderRadius: 9, padding: "10px 12px" }}>
             <div style={{ fontSize: 9, color: C.gray, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 3 }}>Balance</div>
-            <div
-              key={user.balance}
-              style={{
-                fontFamily: "'Cormorant Garamond',serif", fontSize: 24, fontWeight: 700, color: C.gold,
-                animation: lastCredited ? "balancePop .6s ease" : "none",
-              }}
-              onAnimationEnd={() => setLastCredited(null)}
-            >
+            <div key={user.balance} style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 24, fontWeight: 700, color: C.gold, animation: lastCredited ? "balancePop .6s ease" : "none" }} onAnimationEnd={() => setLastCredited(null)}>
               ₦{user.balance.toLocaleString()}
             </div>
-            {lastCredited && (
-              <div style={{ fontSize: 11, color: C.lime, fontFamily: "'Barlow Condensed',sans-serif", animation: "fadeSlideIn .4s ease" }}>
-                +₦{lastCredited.toLocaleString()} credited ✓
-              </div>
-            )}
+            {lastCredited && <div style={{ fontSize: 11, color: C.lime, fontFamily: "'Barlow Condensed',sans-serif", animation: "fadeSlideIn .4s ease" }}>+₦{lastCredited.toLocaleString()} credited ✓</div>}
           </div>
           {mySubmitted.length > 0 && (
             <div style={{ marginTop: 8, padding: "6px 10px", background: `${C.cyan}0f`, border: `1px solid ${C.cyan}2a`, borderRadius: 6, fontSize: 10, color: C.cyan, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.1em" }}>
-              ⏳ {mySubmitted.length} awaiting admin review
+              ⏳ {mySubmitted.length} awaiting review
             </div>
           )}
         </div>
 
-        {/* Nav */}
         <nav style={{ flex: 1, padding: "8px 8px", display: "flex", flexDirection: "column", gap: 2 }}>
           {NAV.map(({ id, icon, label }) => {
             const active = view === id;
-            const badge = id === "my-jobs" ? activeJobs.length + mySubmitted.length : 0;
+            const badge = id === "my-jobs"
+              ? activeJobs.length + mySubmitted.length + (unreadMsgs > 0 ? unreadMsgs : 0)
+              : 0;
             return (
               <button key={id} onClick={() => navigate(id)} style={{
                 padding: "10px 12px", display: "flex", alignItems: "center", gap: 10,
                 fontFamily: "'Barlow Condensed',sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase",
                 background: active ? `linear-gradient(90deg,${C.cyan}1e,transparent)` : "transparent",
                 color: active ? C.cyan : C.gray,
-                border: "none",
-                borderLeft: active ? `2px solid ${C.cyan}` : "2px solid transparent",
-                borderRadius: "0 8px 8px 0",
-                cursor: "pointer", transition: "all .22s", textAlign: "left", width: "100%",
+                border: "none", borderLeft: active ? `2px solid ${C.cyan}` : "2px solid transparent",
+                borderRadius: "0 8px 8px 0", cursor: "pointer", transition: "all .22s", textAlign: "left", width: "100%",
               }}>
                 <span style={{ fontSize: 15, opacity: active ? 1 : 0.4, transition: "opacity .2s", minWidth: 18, textAlign: "center" }}>{icon}</span>
                 <span style={{ flex: 1 }}>{label}</span>
-                {badge > 0 && (
-                  <span style={{ background: C.ember, borderRadius: 10, padding: "1px 7px", fontSize: 10, color: "#fff", fontFamily: "'Inter',sans-serif", fontWeight: 700 }}>{badge}</span>
-                )}
+                {badge > 0 && <span style={{ background: C.ember, borderRadius: 10, padding: "1px 7px", fontSize: 10, color: "#fff", fontFamily: "'Inter',sans-serif", fontWeight: 700 }}>{badge}</span>}
               </button>
             );
           })}
         </nav>
 
-        {/* Quick stats */}
         <div style={{ padding: "10px 14px", borderTop: `1px solid #ffffff07`, display: "flex", justifyContent: "space-between" }}>
-          {([["Active", activeJobs.length, C.gold], ["Submitted", mySubmitted.length, C.cyan], ["Done", myApproved.length, C.lime]] as [string, number, string][]).map(([l, v, c]) => (
+          {([["Active", activeJobs.length, C.gold], ["Submitted", mySubmitted.length, C.cyan], ["Done", myApproved.length, C.lime]] as [string,number,string][]).map(([l, v, c]) => (
             <div key={l} style={{ textAlign: "center" }}>
               <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 18, color: c, transition: "color .3s" }}>{v}</div>
               <div style={{ fontSize: 9, color: C.gray, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.1em", textTransform: "uppercase" }}>{l}</div>
@@ -166,7 +153,6 @@ export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout }: {
           ))}
         </div>
 
-        {/* Skills + Logout */}
         <div style={{ padding: "8px 12px 10px", borderTop: `1px solid #ffffff07` }}>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
             {user.skills.slice(0, 3).map(s => (
@@ -179,37 +165,26 @@ export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout }: {
 
       {/* ── MAIN ── */}
       <main style={{ marginLeft: 218, flex: 1, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-        {/* Topbar */}
-        <div style={{
-          height: 50, borderBottom: `1px solid #ffffff07`,
-          display: "flex", alignItems: "center", padding: "0 32px", gap: 16,
-          background: "rgba(10,10,13,.85)", backdropFilter: "blur(12px)",
-          position: "sticky", top: 0, zIndex: 40,
-        }}>
+        <div style={{ height: 50, borderBottom: `1px solid #ffffff07`, display: "flex", alignItems: "center", padding: "0 32px", gap: 16, background: "rgba(10,10,13,.85)", backdropFilter: "blur(12px)", position: "sticky", top: 0, zIndex: 40 }}>
           <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 17, color: C.ash, fontWeight: 700 }}>
             {NAV.find(n => n.id === view)?.label}
           </span>
           <div style={{ flex: 1 }} />
+          <NotificationBell notifications={notifications} onMarkRead={onMarkNotifRead} onClear={onClearNotifs} />
           {activeJobs.length > 0 && (
-            <button onClick={() => navigate("my-jobs")} style={{ padding: "4px 12px", background: `${C.gold}18`, border: `1px solid ${C.gold}44`, borderRadius: 5, color: C.gold, fontSize: 11, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.1em", cursor: "pointer", animation: "fadeIn .3s ease" }}>
-              ⚡ {activeJobs.length} active job{activeJobs.length > 1 ? "s" : ""}
+            <button onClick={() => navigate("my-jobs")} style={{ padding: "4px 12px", background: `${C.gold}18`, border: `1px solid ${C.gold}44`, borderRadius: 5, color: C.gold, fontSize: 11, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.1em", cursor: "pointer" }}>
+              ⚡ {activeJobs.length} active
             </button>
           )}
         </div>
 
-        {/* Animated page */}
         <div style={{ flex: 1, padding: "28px 36px" }}>
-          <div
-            key={view}
-            style={{
-              animation: `pageSlideIn .35s cubic-bezier(.22,.68,0,1.2) both`,
-              "--from-x": fromX,
-            } as React.CSSProperties}
-          >
-            {view === "board"    && <WorkerJobBoard jobs={jobs} user={user} activeJobs={activeJobs} onAccept={acceptJob} />}
-            {view === "my-jobs"  && <WorkerMyJobs jobs={jobs} activeJobs={activeJobs} user={user} onSubmit={submitJob} />}
-            {view === "balance"  && <WorkerBalance user={user} />}
-            {view === "settings" && <WorkerSettings user={user} setUser={setUser} showToast={showToast} />}
+          <div key={view} style={{ animation: `pageSlideIn .35s cubic-bezier(.22,.68,0,1.2) both`, "--from-x": fromX } as React.CSSProperties}>
+            {view === "board"       && <WorkerJobBoard jobs={jobs} user={user} activeJobs={activeJobs} onAccept={acceptJob} />}
+            {view === "my-jobs"     && <WorkerMyJobs jobs={jobs} activeJobs={activeJobs} user={user} onSubmit={submitJob} onMessage={sendMessage} />}
+            {view === "balance"     && <WorkerBalance user={user} />}
+            {view === "leaderboard" && <Leaderboard workers={allWorkers} />}
+            {view === "settings"    && <WorkerSettings user={user} setUser={setUser} showToast={showToast} />}
           </div>
         </div>
       </main>
