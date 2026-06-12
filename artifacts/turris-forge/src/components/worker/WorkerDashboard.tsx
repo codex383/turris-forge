@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { C } from "../../data/seed";
 import { Logo } from "../Logo";
 import { Btn } from "../shared";
@@ -15,6 +15,7 @@ const NAV = [
   { id: "balance",  icon: "₦", label: "Balance"   },
   { id: "settings", icon: "⚙", label: "Settings"  },
 ];
+const NAV_IDS = NAV.map(n => n.id);
 
 export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout }: {
   user: Worker;
@@ -26,15 +27,24 @@ export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout }: {
   const [view, setView] = useState("board");
   const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([]);
   const [toast, setToast] = useState<string | null>(null);
-  const [lastApprovedAmount, setLastApprovedAmount] = useState<number | null>(null);
+  const [direction, setDirection] = useState<"forward" | "back">("forward");
+  const [lastCredited, setLastCredited] = useState<number | null>(null);
+  const prevIdx = useRef(0);
   const showToast = (msg: string) => setToast(msg);
+
+  const navigate = (id: string) => {
+    const nextIdx = NAV_IDS.indexOf(id);
+    setDirection(nextIdx >= prevIdx.current ? "forward" : "back");
+    prevIdx.current = nextIdx;
+    setView(id);
+  };
 
   const acceptJob = (job: Job) => {
     if (activeJobs.find(a => a.job.id === job.id)) { showToast("Already accepted!"); return; }
     setJobs(p => p.map(j => j.id === job.id ? { ...j, status: "In Progress" } : j));
     setActiveJobs(p => [...p, { job, deadline: job.deadline, startedAt: Date.now(), pay: job.pay }]);
     showToast("⚡ Job accepted! Countdown started.");
-    setView("my-jobs");
+    navigate("my-jobs");
   };
 
   const submitJob = (jobId: string, notes: string) => {
@@ -49,25 +59,26 @@ export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout }: {
     setJobs(p => p.map(j => j.id === jobId ? { ...j, status: "Submitted", submissions: [...j.submissions, sub] } : j));
     setActiveJobs(p => p.filter(a => a.job.id !== jobId));
     showToast(late
-      ? `📨 Submitted late — Pending review (₦${Math.round(finalPay)} due to lateness)`
-      : "📨 Submitted on time! Pending admin review.");
-    setView("my-jobs");
+      ? `📨 Submitted late — ₦${Math.round(finalPay)} pending (${Math.round(penaltyPct * 100)}% deduction)`
+      : "📨 Submitted on time! Waiting for admin review.");
+    navigate("my-jobs");
   };
 
-  const mySubmitted = jobs.filter(j =>
-    j.status === "Submitted" && j.submissions.some(s => s.workerId === user.id));
-  const myApproved = jobs.filter(j =>
-    j.status === "Approved" && j.submissions.some(s => s.workerId === user.id));
+  const mySubmitted = jobs.filter(j => j.status === "Submitted" && j.submissions.some(s => s.workerId === user.id));
+  const myApproved  = jobs.filter(j => j.status === "Approved"  && j.submissions.some(s => s.workerId === user.id));
+  const fromX = direction === "forward" ? "28px" : "-28px";
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", position: "relative", zIndex: 1 }}>
+
       {/* ── SIDEBAR ── */}
       <aside style={{
-        position: "fixed", left: 0, top: 0, bottom: 0, width: 220,
-        background: "rgba(13,13,15,.97)",
+        position: "fixed", left: 0, top: 0, bottom: 0, width: 218,
+        background: "rgba(10,10,13,.98)",
         borderRight: `1px solid ${C.cyan}18`,
         backdropFilter: "blur(20px)",
         zIndex: 50, display: "flex", flexDirection: "column",
+        boxShadow: `4px 0 40px #00000055`,
       }}>
         {/* Brand */}
         <div style={{ padding: "20px 18px 16px", borderBottom: `1px solid #ffffff07`, display: "flex", alignItems: "center", gap: 10 }}>
@@ -78,98 +89,128 @@ export function WorkerDashboard({ user, setUser, jobs, setJobs, onLogout }: {
           </div>
         </div>
 
-        {/* Profile + Balance */}
-        <div style={{ padding: "14px 18px", borderBottom: `1px solid #ffffff07` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-            <div style={{ width: 40, height: 40, borderRadius: "50%", background: `linear-gradient(135deg,${C.cyan},${C.teal})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700, color: "#000", flexShrink: 0 }}>{user.name[0]}</div>
+        {/* Profile + Live Balance */}
+        <div style={{ padding: "14px 18px 14px", borderBottom: `1px solid #ffffff07` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+            <div style={{
+              width: 42, height: 42, borderRadius: "50%",
+              background: `linear-gradient(135deg,${C.cyan},${C.teal})`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 18, fontWeight: 700, color: "#000", flexShrink: 0,
+              boxShadow: `0 0 14px ${C.cyan}44`,
+            }}>{user.name[0]}</div>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 13, color: C.ash, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user.name}</div>
-              <div style={{ fontSize: 10, color: C.cyan, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.12em", textTransform: "uppercase" }}>Creative</div>
+              <div style={{ fontSize: 9, color: C.cyan, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.15em", textTransform: "uppercase", marginTop: 1 }}>Creative</div>
             </div>
           </div>
-          <div style={{ background: `${C.gold}0f`, border: `1px solid ${C.gold}22`, borderRadius: 8, padding: "10px 12px" }}>
-            <div style={{ fontSize: 10, color: C.gray, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 2 }}>Current Balance</div>
+          {/* Balance card */}
+          <div style={{ background: `${C.gold}0d`, border: `1px solid ${C.gold}22`, borderRadius: 9, padding: "10px 12px" }}>
+            <div style={{ fontSize: 9, color: C.gray, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 3 }}>Balance</div>
             <div
               key={user.balance}
               style={{
-                fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 700, color: C.gold,
-                animation: lastApprovedAmount ? "balancePop .6s ease" : "none",
+                fontFamily: "'Cormorant Garamond',serif", fontSize: 24, fontWeight: 700, color: C.gold,
+                animation: lastCredited ? "balancePop .6s ease" : "none",
               }}
-              onAnimationEnd={() => setLastApprovedAmount(null)}
+              onAnimationEnd={() => setLastCredited(null)}
             >
               ₦{user.balance.toLocaleString()}
             </div>
-            {lastApprovedAmount && (
+            {lastCredited && (
               <div style={{ fontSize: 11, color: C.lime, fontFamily: "'Barlow Condensed',sans-serif", animation: "fadeSlideIn .4s ease" }}>
-                +₦{lastApprovedAmount.toLocaleString()} credited ✓
+                +₦{lastCredited.toLocaleString()} credited ✓
               </div>
             )}
           </div>
           {mySubmitted.length > 0 && (
-            <div style={{ marginTop: 8, padding: "6px 10px", background: `${C.cyan}11`, border: `1px solid ${C.cyan}33`, borderRadius: 6, fontSize: 11, color: C.cyan, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.1em" }}>
-              ⏳ {mySubmitted.length} awaiting review
+            <div style={{ marginTop: 8, padding: "6px 10px", background: `${C.cyan}0f`, border: `1px solid ${C.cyan}2a`, borderRadius: 6, fontSize: 10, color: C.cyan, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.1em" }}>
+              ⏳ {mySubmitted.length} awaiting admin review
             </div>
           )}
         </div>
 
         {/* Nav */}
-        <nav style={{ flex: 1, padding: "10px 10px", display: "flex", flexDirection: "column", gap: 1 }}>
+        <nav style={{ flex: 1, padding: "8px 8px", display: "flex", flexDirection: "column", gap: 2 }}>
           {NAV.map(({ id, icon, label }) => {
             const active = view === id;
             const badge = id === "my-jobs" ? activeJobs.length + mySubmitted.length : 0;
             return (
-              <button key={id} onClick={() => setView(id)} style={{
-                padding: "9px 12px", display: "flex", alignItems: "center", gap: 9,
+              <button key={id} onClick={() => navigate(id)} style={{
+                padding: "10px 12px", display: "flex", alignItems: "center", gap: 10,
                 fontFamily: "'Barlow Condensed',sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase",
-                background: active ? `linear-gradient(90deg,${C.cyan}20,transparent)` : "transparent",
-                color: active ? C.cyan : C.gray2,
-                border: "none", borderLeft: active ? `2px solid ${C.cyan}` : "2px solid transparent",
-                borderRadius: "0 6px 6px 0", cursor: "pointer", transition: "all .2s", textAlign: "left",
+                background: active ? `linear-gradient(90deg,${C.cyan}1e,transparent)` : "transparent",
+                color: active ? C.cyan : C.gray,
+                border: "none",
+                borderLeft: active ? `2px solid ${C.cyan}` : "2px solid transparent",
+                borderRadius: "0 8px 8px 0",
+                cursor: "pointer", transition: "all .22s", textAlign: "left", width: "100%",
               }}>
-                <span style={{ fontSize: 14, opacity: active ? 1 : 0.5 }}>{icon}</span>
+                <span style={{ fontSize: 15, opacity: active ? 1 : 0.4, transition: "opacity .2s", minWidth: 18, textAlign: "center" }}>{icon}</span>
                 <span style={{ flex: 1 }}>{label}</span>
-                {badge > 0 && <span style={{ background: C.ember, borderRadius: 10, padding: "1px 7px", fontSize: 10, color: "#fff", fontFamily: "'Inter',sans-serif" }}>{badge}</span>}
+                {badge > 0 && (
+                  <span style={{ background: C.ember, borderRadius: 10, padding: "1px 7px", fontSize: 10, color: "#fff", fontFamily: "'Inter',sans-serif", fontWeight: 700 }}>{badge}</span>
+                )}
               </button>
             );
           })}
         </nav>
 
         {/* Quick stats */}
-        <div style={{ padding: "10px 18px", borderTop: `1px solid #ffffff07`, display: "flex", justifyContent: "space-between" }}>
+        <div style={{ padding: "10px 14px", borderTop: `1px solid #ffffff07`, display: "flex", justifyContent: "space-between" }}>
           {([["Active", activeJobs.length, C.gold], ["Submitted", mySubmitted.length, C.cyan], ["Done", myApproved.length, C.lime]] as [string, number, string][]).map(([l, v, c]) => (
             <div key={l} style={{ textAlign: "center" }}>
-              <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 18, color: c }}>{v}</div>
+              <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 18, color: c, transition: "color .3s" }}>{v}</div>
               <div style={{ fontSize: 9, color: C.gray, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.1em", textTransform: "uppercase" }}>{l}</div>
             </div>
           ))}
         </div>
 
-        {/* Logout */}
-        <div style={{ padding: "12px 10px", borderTop: `1px solid #ffffff07` }}>
-          <Btn variant="danger" onClick={onLogout} style={{ width: "100%", padding: "9px 12px", fontSize: 11, letterSpacing: "0.1em" }}>← Log Out</Btn>
+        {/* Skills + Logout */}
+        <div style={{ padding: "8px 12px 10px", borderTop: `1px solid #ffffff07` }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+            {user.skills.slice(0, 3).map(s => (
+              <span key={s} style={{ fontSize: 9, background: `${C.cyan}15`, border: `1px solid ${C.cyan}2a`, borderRadius: 3, padding: "2px 6px", color: C.cyan, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.08em", textTransform: "uppercase" }}>{s}</span>
+            ))}
+          </div>
+          <Btn variant="danger" onClick={onLogout} style={{ width: "100%", padding: "8px 12px", fontSize: 11, letterSpacing: "0.1em" }}>← Log Out</Btn>
         </div>
       </aside>
 
       {/* ── MAIN ── */}
-      <main style={{ marginLeft: 220, flex: 1, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-        {/* Top bar */}
-        <div style={{ height: 52, borderBottom: `1px solid #ffffff07`, display: "flex", alignItems: "center", padding: "0 32px", gap: 16, background: "rgba(13,13,15,.7)", backdropFilter: "blur(10px)", position: "sticky", top: 0, zIndex: 40 }}>
-          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 18, color: C.ash, fontWeight: 700 }}>
+      <main style={{ marginLeft: 218, flex: 1, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+        {/* Topbar */}
+        <div style={{
+          height: 50, borderBottom: `1px solid #ffffff07`,
+          display: "flex", alignItems: "center", padding: "0 32px", gap: 16,
+          background: "rgba(10,10,13,.85)", backdropFilter: "blur(12px)",
+          position: "sticky", top: 0, zIndex: 40,
+        }}>
+          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 17, color: C.ash, fontWeight: 700 }}>
             {NAV.find(n => n.id === view)?.label}
           </span>
           <div style={{ flex: 1 }} />
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            {user.skills.slice(0, 2).map(s => (
-              <span key={s} style={{ fontSize: 10, background: `${C.cyan}18`, border: `1px solid ${C.cyan}33`, borderRadius: 4, padding: "2px 8px", color: C.cyan, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.1em", textTransform: "uppercase" }}>{s}</span>
-            ))}
-          </div>
+          {activeJobs.length > 0 && (
+            <button onClick={() => navigate("my-jobs")} style={{ padding: "4px 12px", background: `${C.gold}18`, border: `1px solid ${C.gold}44`, borderRadius: 5, color: C.gold, fontSize: 11, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.1em", cursor: "pointer", animation: "fadeIn .3s ease" }}>
+              ⚡ {activeJobs.length} active job{activeJobs.length > 1 ? "s" : ""}
+            </button>
+          )}
         </div>
 
-        <div style={{ flex: 1, padding: "28px 36px", maxWidth: 1100, width: "100%" }}>
-          {view === "board"    && <WorkerJobBoard jobs={jobs} user={user} activeJobs={activeJobs} onAccept={acceptJob} />}
-          {view === "my-jobs"  && <WorkerMyJobs jobs={jobs} activeJobs={activeJobs} user={user} onSubmit={submitJob} />}
-          {view === "balance"  && <WorkerBalance user={user} />}
-          {view === "settings" && <WorkerSettings user={user} setUser={setUser} showToast={showToast} />}
+        {/* Animated page */}
+        <div style={{ flex: 1, padding: "28px 36px" }}>
+          <div
+            key={view}
+            style={{
+              animation: `pageSlideIn .35s cubic-bezier(.22,.68,0,1.2) both`,
+              "--from-x": fromX,
+            } as React.CSSProperties}
+          >
+            {view === "board"    && <WorkerJobBoard jobs={jobs} user={user} activeJobs={activeJobs} onAccept={acceptJob} />}
+            {view === "my-jobs"  && <WorkerMyJobs jobs={jobs} activeJobs={activeJobs} user={user} onSubmit={submitJob} />}
+            {view === "balance"  && <WorkerBalance user={user} />}
+            {view === "settings" && <WorkerSettings user={user} setUser={setUser} showToast={showToast} />}
+          </div>
         </div>
       </main>
 
