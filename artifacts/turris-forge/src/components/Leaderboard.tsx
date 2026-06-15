@@ -20,6 +20,13 @@ function StarRating({ rating, count }: { rating: number; count: number }) {
   );
 }
 
+
+const getLevel = (jobsDone: number) => {
+  if (jobsDone >= 11) return { label: "Expert", color: "#E8912A", icon: "⭐" };
+  if (jobsDone >= 5) return { label: "Intermediate", color: "#00E5FF", icon: "🔷" };
+  return { label: "Beginner", color: "#A8FF3E", icon: "🌱" };
+};
+
 export function Leaderboard({ workers }: { workers: Worker[] }) {
   const ranked = [...workers].sort((a, b) => b.balance - a.balance);
   const totalPaid = workers.reduce((s, w) => s + w.balance, 0);
@@ -95,7 +102,10 @@ export function Leaderboard({ workers }: { workers: Worker[] }) {
                 <div style={{ width: 38, height: 38, borderRadius: "50%", background: `linear-gradient(135deg,${PALETTE[i % PALETTE.length]},${C.ash}22)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700, color: "#000", flexShrink: 0 }}>{w.name[0]}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, color: C.ash, fontWeight: 600 }}>{w.name}</div>
-                  <div style={{ fontSize: 11, color: C.gray }}>{w.skills[0]}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ fontSize: 11, color: C.gray }}>{w.skills[0]}</div>
+                    {(() => { const lvl = getLevel(w.history.filter(h => h.status === "Approved").length); return <span style={{ fontSize: 9, padding: "1px 6px", background: lvl.color + "22", border: `1px solid ${lvl.color}44`, borderRadius: 8, color: lvl.color, fontFamily: "'Barlow Condensed',sans-serif" }}>{lvl.icon} {lvl.label}</span>; })()}
+                  </div>
                 </div>
                 <div style={{ minWidth: 80, textAlign: "right" }}>
                   <StarRating rating={w.rating || 0} count={w.ratingCount || 0} />

@@ -1,11 +1,16 @@
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { auth } from "./lib/firebase";
+import { getUserProfile, saveNotifications, loadNotifications } from "./lib/userProfile";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { db } from "./lib/firebase";
+import { subscribeToJobs } from "./lib/jobs";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { ParticleCanvas } from "./components/ParticleCanvas";
 import { LoadingScreen } from "./components/LoadingScreen";
 import { AuthScreen } from "./components/AuthScreen";
 import { AdminDashboard } from "./components/admin/AdminDashboard";
 import { WorkerDashboard } from "./components/worker/WorkerDashboard";
-import { C, SEED_JOBS, SEED_WORKERS } from "./data/seed";
-import { loadSession, saveSession, clearSession, storedToWorker, getUsers, registerUser, type StoredUser } from "./lib/auth";
+import { C } from "./data/seed";
 import type { Job, Worker, Notification } from "./types";
 
 type AdminUser = { id: string; name: string; email: string; role: "admin"; balance: number };
@@ -43,50 +48,89 @@ const STYLES = `
   }
 `;
 
-function seedDefaultUsers() {
-  const users = getUsers();
-  if (!users.find(u => u.email === "admin@turrisforge.com")) {
-    registerUser("Wahnsinn", "admin@turrisforge.com", "admin123", "admin");
-  }
-  if (!users.find(u => u.email === "seun@forge.ng")) {
-    registerUser("Seun Adesola", "seun@forge.ng", "forge123", "worker", {
-      skills: ["2D Animation","Character Design","Inking"],
-      balance: 480, bio: "Senior animator with 7 years in Japanese-style production.",
-      portfolio: "https://artstation.com",
-    });
-  }
-  if (!users.find(u => u.email === "tunde@forge.ng")) {
-    registerUser("Tunde Eze", "tunde@forge.ng", "forge123", "worker", {
-      skills: ["Background Design","Concept Art","Layout & Composition"],
-      balance: 210, bio: "Environment specialist. Background in architectural illustration.",
-    });
-  }
+export default function App() {
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // 1. Get full profile from Firestore
+        const profile = await getUserProfile(firebaseUser.uid);
+
+        if (!profile) {
+  console.log("No profile found");
+  setUser(null);
+  setLoading(false);
+  return;
 }
 
-export default function App() {
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<AnyUser | null>(null);
-  const [jobs, setJobs] = useState<Job[]>(SEED_JOBS);
-  const [workers, setWorkers] = useState<Worker[]>(() => { seedDefaultUsers(); return SEED_WORKERS; });
+        // Check if worker is banned
+        if ((profile as any).banned) {
+          await signOut(auth);
+          alert(`🚫 Your account has been suspended.\n\nReason: ${(profile as any).banReason || "Contact the studio admin for more information."}`);
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+
+        console.log("Auto-login success:", profile);
+
+        // 2. Send user into app state
+        setUser({ ...profile, id: profile.uid });
+        const savedNotifs = await loadNotifications(firebaseUser.uid);
+        if (savedNotifs.length > 0) setNotifications(savedNotifs);
+      } else {
+        console.log("User logged out");
+        setUser(null);
+      }
+
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const [jobs, setJobs] = useState<Job[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    const unsub = subscribeToJobs((liveJobs) => {
+      setJobs(liveJobs);
+    });
+    return () => unsub();
+  }, [user]);
+  const [workers, setWorkers] = useState<Worker[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, "users"), where("role", "==", "worker"));
+    const unsub = onSnapshot(q, (snap) => {
+      const list: Worker[] = snap.docs.map((d): Worker => {
+        const u = { id: d.id, ...d.data() } as any;
+        return {
+          id: u.id || u.uid,
+          name: u.name || "",
+          email: u.email || "",
+          role: "worker" as const,
+          skills: u.skills || [],
+          balance: u.balance || 0,
+          bio: u.bio || "",
+          portfolio: u.portfolio || "",
+          history: u.history || [],
+          rating: u.rating || 0,
+          ratingCount: u.ratingCount || 0,
+          joined: u.joined || Date.now(),
+        };
+      });
+      setWorkers(list);
+    });
+    return () => unsub();
+  }, [user]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const prevJobIds = useRef<Set<string>>(new Set(SEED_JOBS.map(j => j.id)));
+  const prevJobIds = useRef<Set<string>>(new Set());
 
   // Restore session
-  useEffect(() => {
-    const session = loadSession();
-    if (session) {
-      if (session.role === "admin") {
-        setUser({ id: session.id, name: session.name, email: session.email, role: "admin", balance: 0 });
-      } else {
-        const worker = storedToWorker(session);
-        setUser(worker);
-        setWorkers(prev => {
-          const exists = prev.find(w => w.id === worker.id);
-          return exists ? prev.map(w => w.id === worker.id ? worker : w) : [...prev, worker];
-        });
-      }
-    }
-  }, []);
 
   // Watch jobs for changes to generate notifications
   useEffect(() => {
@@ -152,7 +196,11 @@ export default function App() {
       });
 
       if (newJobNotifs.length > 0) {
-        setNotifications(prev => [...newJobNotifs, ...prev]);
+        setNotifications(prev => {
+          const updated = [...newJobNotifs, ...prev];
+          if (user) saveNotifications(user.uid || user.id, updated);
+          return updated;
+        });
       }
     }
 
@@ -192,28 +240,57 @@ export default function App() {
         });
       });
       if (newNotifs.length > 0) {
-        setNotifications(prev => [...newNotifs, ...prev]);
+        setNotifications(prev => {
+          const updated = [...newNotifs, ...prev];
+          if (user) saveNotifications(user.uid || user.id, updated);
+          return updated;
+        });
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobs, user?.id]);
 
-  const handleAuth = useCallback((u: AnyUser, stored: StoredUser) => {
-    saveSession(stored);
-    setUser(u);
-    if (u.role === "worker") {
-      setWorkers(prev => {
-        const exists = prev.find(w => w.id === u.id);
-        return exists ? prev.map(w => w.id === u.id ? (u as Worker) : w) : [...prev, u as Worker];
-      });
-    }
-  }, []);
+const handleAuth = useCallback((u: AnyUser) => {
+  setUser(u);
 
-  const handleLogout = useCallback(() => { clearSession(); setUser(null); setNotifications([]); }, []);
-  const handleLoaded = useCallback(() => setLoading(false), []);
+  if (u.role === "worker") {
+    const safeWorker: Worker = {
+      ...(u as Worker),
+      id:        (u as any).uid || (u as Worker).id,
+      skills:    (u as Worker).skills    ?? [],
+      balance:   (u as Worker).balance   ?? 0,
+      bio:       (u as Worker).bio       ?? "",
+      portfolio: (u as Worker).portfolio ?? "",
+      history:   (u as Worker).history   ?? [],
+    };
 
-  const markNotifRead = useCallback((id: string) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n)), []);
-  const clearNotifs = useCallback(() => setNotifications([]), []);
+    setWorkers(prev => {
+      const exists = prev.find(w => w.id === safeWorker.id);
+      return exists
+        ? prev.map(w => w.id === safeWorker.id ? safeWorker : w)
+        : [...prev, safeWorker];
+    });
+  }
+}, []);  
+
+const handleLogout = useCallback(async () => {
+  await signOut(auth);
+  setUser(null);
+  setNotifications([]);
+}, []);  
+const handleLoaded = useCallback(() => setLoading(false), []);
+
+  const markNotifRead = useCallback((id: string) => {
+    setNotifications(prev => {
+      const updated = prev.map(n => n.id === id ? { ...n, read: true } : n);
+      if (user) saveNotifications(user.uid || user.id, updated);
+      return updated;
+    });
+  }, [user]);
+  const clearNotifs = useCallback(() => {
+    setNotifications([]);
+    if (user) saveNotifications(user.uid || user.id, []);
+  }, [user]);
 
   const currentWorker = user?.role === "worker"
     ? workers.find(w => w.id === user.id) ?? (user as Worker)

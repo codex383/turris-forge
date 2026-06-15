@@ -1,17 +1,58 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { C } from "../../data/seed";
 import { Eyebrow, SectionTitle, GlowDivider, Badge, Card, Btn, Input, statusColor } from "../shared";
-import type { Worker } from "../../types";
+import { createWithdrawal, subscribeToWorkerWithdrawals } from "../../lib/withdrawals";
+import type { Worker, WithdrawalRequest } from "../../types";
 
-export function WorkerBalance({ user }: { user: Worker }) {
+export function WorkerBalance({ user, showToast }: { user: Worker; showToast: (m: string) => void }) {
   const history = user.history || [];
-  const [bank, setBank] = useState("");
-  const [acct, setAcct] = useState("");
-  const [bankSaved, setBankSaved] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [accountName, setAccountName] = useState("");
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [showForm, setShowForm] = useState(false);
 
   const totalEarned = history.reduce((s, h) => s + h.amount, 0);
   const completedCount = history.filter(h => h.status === "Approved").length;
   const avgPay = completedCount ? Math.round(totalEarned / completedCount) : 0;
+  const pendingWithdrawals = withdrawals.filter(w => w.status === "Pending").reduce((s, w) => s + w.amount, 0);
+
+  useEffect(() => {
+    const unsub = subscribeToWorkerWithdrawals(user.id, setWithdrawals);
+    return () => unsub();
+  }, [user.id]);
+
+  const handleWithdraw = async () => {
+    if (!amount || parseFloat(amount) <= 0) return showToast("⚠️ Enter a valid amount");
+    if (parseFloat(amount) > user.balance) return showToast("⚠️ Amount exceeds your balance");
+    if (!bankName.trim()) return showToast("⚠️ Enter bank name");
+    if (!accountNumber.trim()) return showToast("⚠️ Enter account number");
+    if (!accountName.trim()) return showToast("⚠️ Enter account name");
+
+    setSubmitting(true);
+    try {
+      const w: WithdrawalRequest = {
+        id: "wd_" + Date.now(),
+        workerId: user.id,
+        workerName: user.name,
+        amount: parseFloat(amount),
+        bankName: bankName.trim(),
+        accountNumber: accountNumber.trim(),
+        accountName: accountName.trim(),
+        status: "Pending",
+        requestedAt: Date.now(),
+      };
+      await createWithdrawal(w);
+      showToast("✅ Withdrawal request submitted!");
+      setAmount(""); setBankName(""); setAccountNumber(""); setAccountName("");
+      setShowForm(false);
+    } catch (err: any) {
+      showToast("❌ Failed: " + err.message);
+    }
+    setSubmitting(false);
+  };
 
   return (
     <div>
@@ -25,14 +66,16 @@ export function WorkerBalance({ user }: { user: Worker }) {
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
           <div>
             <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.3em", textTransform: "uppercase", color: C.gray, marginBottom: 6 }}>Available Balance</div>
-            <div
-              key={user.balance}
-              style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 52, fontWeight: 700, color: C.gold, lineHeight: 1, animation: "balancePop .6s ease" }}
-            >
+            <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 52, fontWeight: 700, color: C.gold, lineHeight: 1 }}>
               ₦{user.balance.toLocaleString()}
             </div>
+            {pendingWithdrawals > 0 && (
+              <div style={{ fontSize: 11, color: C.ember, marginTop: 6, fontFamily: "'Barlow Condensed',sans-serif" }}>
+                ⏳ ₦{pendingWithdrawals.toLocaleString()} pending withdrawal
+              </div>
+            )}
           </div>
-          <div style={{ display: "flex", gap: 12 }}>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             {([["Total Earned", `₦${totalEarned.toLocaleString()}`, C.cyan], ["Jobs Done", completedCount, C.lime], ["Avg Pay", `₦${avgPay.toLocaleString()}`, C.violet2]] as [string, string|number, string][]).map(([l, v, c]) => (
               <div key={l} style={{ textAlign: "center", background: `${c}0f`, border: `1px solid ${c}22`, borderRadius: 8, padding: "10px 14px" }}>
                 <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 22, color: c }}>{v}</div>
@@ -41,20 +84,55 @@ export function WorkerBalance({ user }: { user: Worker }) {
             ))}
           </div>
         </div>
-        {history.length > 0 && (
-          <div style={{ marginTop: 18, display: "flex", gap: 2 }}>
-            {history.map((h, i) => (
-              <div key={i} title={`₦${h.amount}`} style={{
-                flex: h.amount,
-                height: 4,
-                background: [C.gold, C.cyan, C.teal, C.lime][i % 4],
-                borderRadius: 2,
-                opacity: 0.7,
-              }} />
-            ))}
-          </div>
-        )}
+        <div style={{ marginTop: 18 }}>
+          <Btn onClick={() => setShowForm(p => !p)} style={{ padding: "11px 28px" }}>
+            💸 {showForm ? "Cancel" : "Request Withdrawal"}
+          </Btn>
+        </div>
       </Card>
+
+      {/* Withdrawal Form */}
+      {showForm && (
+        <Card style={{ marginBottom: 20, border: `1px solid ${C.gold}33` }}>
+          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: C.gold, marginBottom: 16 }}>Withdrawal Request</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Input label={`Amount (₦) — Max ₦${user.balance.toLocaleString()}`} type="number" value={amount} onChange={setAmount} placeholder="Enter amount" />
+            <Input label="Bank Name" value={bankName} onChange={setBankName} placeholder="e.g. GTBank, Access Bank" />
+            <Input label="Account Number" value={accountNumber} onChange={setAccountNumber} placeholder="10-digit account number" />
+            <Input label="Account Name" value={accountName} onChange={setAccountName} placeholder="Name on the account" />
+          </div>
+          <div style={{ marginTop: 8, padding: "10px 14px", background: `${C.gold}0f`, border: `1px solid ${C.gold}22`, borderRadius: 6, fontSize: 12, color: C.gray2, lineHeight: 1.6 }}>
+            💡 Your request will be reviewed by the studio admin. Payment will be sent via bank transfer within 24–48 hours.
+          </div>
+          <Btn onClick={handleWithdraw} style={{ marginTop: 14, width: "100%", padding: 14 }}>
+            {submitting ? "Submitting..." : "📤 Submit Withdrawal Request"}
+          </Btn>
+        </Card>
+      )}
+
+      {/* Withdrawal History */}
+      {withdrawals.length > 0 && (
+        <Card style={{ marginBottom: 16 }}>
+          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: C.cyan, marginBottom: 16 }}>Withdrawal Requests</div>
+          {withdrawals.map(w => (
+            <div key={w.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: `1px solid #ffffff06` }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: C.ash }}>{w.bankName} — {w.accountNumber}</div>
+                <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>
+                  {new Date(w.requestedAt).toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric" })}
+                  {w.note && <span style={{ color: C.ember, marginLeft: 8 }}>· {w.note}</span>}
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+                <Badge color={w.status === "Paid" ? C.lime : w.status === "Rejected" ? C.ember : C.gold}>{w.status}</Badge>
+                <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 20, color: w.status === "Paid" ? C.lime : C.gold }}>
+                  ₦{w.amount.toLocaleString()}
+                </div>
+              </div>
+            </div>
+          ))}
+        </Card>
+      )}
 
       {/* Payment History */}
       <Card style={{ marginBottom: 16 }}>
@@ -79,21 +157,6 @@ export function WorkerBalance({ user }: { user: Worker }) {
             </div>
           </div>
         ))}
-      </Card>
-
-      {/* Payout Details */}
-      <Card>
-        <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: C.cyan, marginBottom: 16 }}>Payout Details</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
-          <Input label="Bank Name" value={bank} onChange={setBank} placeholder="e.g. GTBank" />
-          <Input label="Account Number" value={acct} onChange={setAcct} placeholder="0123456789" />
-        </div>
-        {bankSaved && (
-          <div style={{ marginBottom: 12, padding: "8px 12px", background: `${C.lime}18`, border: `1px solid ${C.lime}33`, borderRadius: 6, fontSize: 12, color: C.lime }}>
-            ✓ Payout details saved
-          </div>
-        )}
-        <Btn onClick={() => setBankSaved(true)} style={{ fontSize: 12, padding: "10px 24px" }}>Save Payout Details</Btn>
       </Card>
     </div>
   );

@@ -11,7 +11,8 @@ export interface UploadedFile {
   name: string;
   size: number;
   type: string;
-  dataUrl: string;
+  url: string;
+  publicId?: string;
 }
 
 export interface Job {
@@ -25,9 +26,13 @@ export interface Job {
   status: string;
   submissions: Submission[];
   visibility: string;
+  allowedWorkers?: string[];
   posted: number;
   refNote?: string;
+  refFiles?: { name: string; size: number; type: string; url: string; publicId?: string; }[];
   messages: Message[];
+  acceptedBy?: string;
+  startedAt?: number;
 }
 
 export interface Message {
@@ -61,6 +66,9 @@ export interface Worker {
   history: PaymentRecord[];
   rating: number;
   ratingCount: number;
+  banned?: boolean;
+  banReason?: string;
+  verifiedSkills?: string[];
 }
 
 export interface ActiveJob {
@@ -77,4 +85,18 @@ export interface Notification {
   read: boolean;
   jobId?: string;
   type: "job_match" | "approved" | "rejected" | "message" | "submitted";
+}
+
+export interface WithdrawalRequest {
+  id: string;
+  workerId: string;
+  workerName: string;
+  amount: number;
+  bankName: string;
+  accountNumber: string;
+  accountName: string;
+  status: "Pending" | "Paid" | "Rejected";
+  requestedAt: number;
+  resolvedAt?: number;
+  note?: string;
 }

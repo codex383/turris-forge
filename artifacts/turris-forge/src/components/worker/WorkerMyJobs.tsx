@@ -101,6 +101,8 @@ export function WorkerMyJobs({ jobs, activeJobs, user, onSubmit, onMessage }: {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [chatJob, setChatJob] = useState<Job | null>(null);
 
+  console.log("activeJobs passed in:", activeJobs.map(a => ({ id: a.job.id, acceptedBy: (a.job as any).acceptedBy })));
+  console.log("user id:", user.id, "uid:", (user as any).uid);
   const mySubmitted = jobs.filter(j =>
     (j.status === "Submitted" || j.status === "Approved") &&
     j.submissions.some(s => s.workerId === user.id));
@@ -115,6 +117,7 @@ export function WorkerMyJobs({ jobs, activeJobs, user, onSubmit, onMessage }: {
       <Eyebrow color={C.gold}>Creative Portal</Eyebrow>
       <SectionTitle>My Jobs</SectionTitle>
       <GlowDivider />
+
 
       {activeJobs.length === 0 && mySubmitted.length === 0 && (
         <Card style={{ textAlign: "center", padding: "60px 0" }}>
@@ -169,7 +172,7 @@ export function WorkerMyJobs({ jobs, activeJobs, user, onSubmit, onMessage }: {
                       <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
                         {sub.files.map((f, fi) => (
                           f.type.startsWith("image") ? (
-                            <img key={fi} src={f.dataUrl} alt={f.name} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 5, border: `1px solid #ffffff10` }} />
+                            <img key={fi} src={f.url} alt={f.name} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 5, border: `1px solid #ffffff10` }} />
                           ) : (
                             <div key={fi} style={{ padding: "4px 8px", background: C.sur2, borderRadius: 5, fontSize: 11, color: C.gray2 }}>📎 {f.name}</div>
                           )

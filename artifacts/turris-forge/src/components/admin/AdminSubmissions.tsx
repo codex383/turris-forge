@@ -1,4 +1,8 @@
 import { useState } from "react";
+import { updateJob } from "../../lib/jobs";
+import { sendEmail } from "../../lib/email";
+import { updateDoc, doc } from "firebase/firestore";
+import { db } from "../../lib/firebase";
 import { C } from "../../data/seed";
 import { Eyebrow, SectionTitle, GlowDivider, Badge, Card, Btn, diffColor } from "../shared";
 import { MessagingPanel } from "../MessagingPanel";
@@ -92,12 +96,20 @@ function SubmissionCard({ job, workers, onApprove, onReject, onMessage }: {
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {sub.files.map((f, fi) => (
                       f.type.startsWith("image") ? (
-                        <a key={fi} href={f.dataUrl} download={f.name} title={f.name}>
-                          <img src={f.dataUrl} alt={f.name} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6, border: `1px solid ${C.cyan}33`, cursor: "pointer" }} />
-                        </a>
+                        <div key={fi} style={{ position: "relative", display: "inline-block" }}>
+                          <img src={f.url} alt={f.name} onClick={() => setLightbox({ url: f.url, name: f.name })}
+                            style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 6, border: `1px solid ${C.cyan}33`, cursor: "pointer", transition: "opacity .2s" }}
+                            onMouseEnter={e => (e.currentTarget.style.opacity = "0.8")}
+                            onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
+                          />
+                          <a href={f.url} download={f.name} target="_blank" rel="noopener noreferrer"
+                            style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(0,0,0,.7)", borderRadius: 4, padding: "2px 5px", fontSize: 10, color: "#fff", textDecoration: "none" }}
+                            title="Download">⬇</a>
+                        </div>
                       ) : (
-                        <a key={fi} href={f.dataUrl} download={f.name} style={{ padding: "8px 12px", background: C.sur2, borderRadius: 6, border: `1px solid #ffffff10`, fontSize: 12, color: C.gray2, textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
-                          📎 {f.name}
+                        <a key={fi} href={f.url} download={f.name} target="_blank" rel="noopener noreferrer"
+                          style={{ padding: "8px 12px", background: C.sur2, borderRadius: 6, border: `1px solid #ffffff10`, fontSize: 12, color: C.gray2, textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
+                          📎 {f.name} <span style={{ color: C.cyan, fontSize: 11 }}>⬇ Download</span>
                         </a>
                       )
                     ))}
@@ -158,44 +170,124 @@ export function AdminSubmissions({ jobs, setJobs, workers, setWorkers, showToast
   showToast: (m: string) => void;
 }) {
   const [filter, setFilter] = useState<"pending" | "approved">("pending");
+  const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
   const [chatJob, setChatJob] = useState<Job | null>(null);
+  const [rejectJob, setRejectJob] = useState<Job | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [bulkRating, setBulkRating] = useState(0);
   const adminUser = { id: "admin1", name: "Admin" };
 
   const submitted = jobs.filter(j => j.status === "Submitted");
   const approved  = jobs.filter(j => j.status === "Approved" && j.submissions.length > 0);
 
-  const approve = (job: Job, rating: number) => {
-    setJobs(p => p.map(j => j.id === job.id ? { ...j, status: "Approved" } : j));
+  const approve = async (job: Job, rating: number) => {
     const sub = job.submissions[job.submissions.length - 1];
-    if (sub) {
-      setWorkers(p => p.map(w => {
-        if (w.id !== sub.workerId) return w;
-        const newCount = (w.ratingCount || 0) + (rating > 0 ? 1 : 0);
-        const newRating = rating > 0
-          ? ((w.rating || 0) * (w.ratingCount || 0) + rating) / newCount
-          : w.rating;
-        return {
-          ...w,
-          balance: w.balance + sub.pay,
-          rating: Math.round(newRating * 10) / 10,
-          ratingCount: newCount,
-          history: [...w.history, { jobId: job.id, title: job.title, amount: sub.pay, date: Date.now(), status: "Approved" }],
-        };
-      }));
-    }
     const worker = workers.find(w => w.id === sub?.workerId);
+
+    // Update job in Firestore
+    await updateJob(job.id, { status: "Approved" });
+    setJobs(p => p.map(j => j.id === job.id ? { ...j, status: "Approved" } : j));
+
+    if (sub && worker) {
+      const newCount = (worker.ratingCount || 0) + (rating > 0 ? 1 : 0);
+      const newRating = rating > 0
+        ? ((worker.rating || 0) * (worker.ratingCount || 0) + rating) / newCount
+        : worker.rating;
+      const newBalance = worker.balance + sub.pay;
+      const newHistory = [...worker.history, { jobId: job.id, title: job.title, amount: sub.pay, date: Date.now(), status: "Approved" }];
+      const rounded = Math.round(newRating * 10) / 10;
+
+      // Update worker in Firestore
+      await updateDoc(doc(db, "users", worker.id), {
+        balance: newBalance,
+        rating: rounded,
+        ratingCount: newCount,
+        history: newHistory,
+      });
+
+      // Update local state
+      setWorkers(p => p.map(w => w.id === worker.id ? {
+        ...w,
+        balance: newBalance,
+        rating: rounded,
+        ratingCount: newCount,
+        history: newHistory,
+      } : w));
+    }
+
     showToast(`✅ Approved! ₦${(sub?.pay || job.pay).toLocaleString()} credited to ${worker?.name || "worker"}.`);
+    if (worker?.email) {
+      sendEmail(
+        worker.email,
+        worker.name,
+        "Your submission has been approved! 🎉",
+        `Great news! Your submission for "${job.title}" has been approved.\n\n₦${(sub?.pay || job.pay).toLocaleString()} has been credited to your balance.\n\nKeep up the great work!`
+      ).catch(() => {});
+    }
   };
 
-  const reject = (job: Job) => {
-    setJobs(p => p.map(j => j.id === job.id ? { ...j, status: "Open", submissions: [] } : j));
-    showToast("❌ Submission rejected — job reopened.");
+  const reject = async (job: Job, reason: string) => {
+    const rejMsg = { id: "rej_" + Date.now(), from: "admin", fromName: "Admin", fromRole: "admin" as const, text: `❌ Your submission was rejected.\n\nReason: ${reason || "No reason provided."}`, at: Date.now(), read: false };
+    const updatedMessages = [...(job.messages || []), rejMsg];
+    await updateJob(job.id, { status: "Open", submissions: [], messages: updatedMessages });
+    setJobs(p => p.map(j => j.id === job.id ? { ...j, status: "Open", submissions: [], messages: updatedMessages } : j));
+    setRejectJob(null);
+    setRejectReason("");
+    showToast("❌ Submission rejected — reason sent to worker.");
+    const rejWorker = workers.find(w => w.id === job.submissions[job.submissions.length - 1]?.workerId);
+    if (rejWorker?.email) {
+      sendEmail(
+        rejWorker.email,
+        rejWorker.name,
+        "Your submission needs revision",
+        `Your submission for "${job.title}" has been reviewed and needs revision.\n\nReason: ${reason || "No reason provided."}\n\nPlease review the feedback and resubmit when ready.`
+      ).catch(() => {});
+    }
   };
 
-  const sendMessage = (jobId: string, text: string) => {
+  const toggleSelect = (jobId: string) => {
+    setSelected(p => p.includes(jobId) ? p.filter(id => id !== jobId) : [...p, jobId]);
+  };
+
+  const selectAll = () => {
+    if (selected.length === submitted.length) {
+      setSelected([]);
+    } else {
+      setSelected(submitted.map(j => j.id));
+    }
+  };
+
+  const bulkApprove = async () => {
+    for (const jobId of selected) {
+      const job = submitted.find(j => j.id === jobId);
+      if (job) await approve(job, bulkRating);
+    }
+    setSelected([]);
+    showToast(`✅ ${selected.length} submissions approved!`);
+  };
+
+  const bulkReject = async () => {
+    for (const jobId of selected) {
+      const job = submitted.find(j => j.id === jobId);
+      if (job) await reject(job, "Bulk rejected by admin");
+    }
+    setSelected([]);
+    showToast(`❌ ${selected.length} submissions rejected!`);
+  };
+
+  const sendMessage = async (jobId: string, text: string) => {
     const msg = { id: "m" + Date.now(), from: adminUser.id, fromName: adminUser.name, fromRole: "admin" as const, text, at: Date.now(), read: false };
-    setJobs(p => p.map(j => j.id === jobId ? { ...j, messages: [...(j.messages || []), msg] } : j));
-    if (chatJob) setChatJob(prev => prev ? { ...prev, messages: [...(prev.messages || []), msg] } : prev);
+    const job = jobs.find(j => j.id === jobId);
+    if (!job) return;
+    const updatedMessages = [...(job.messages || []), msg];
+    try {
+      await updateJob(jobId, { messages: updatedMessages });
+      setJobs(p => p.map(j => j.id === jobId ? { ...j, messages: updatedMessages } : j));
+      if (chatJob) setChatJob(prev => prev ? { ...prev, messages: updatedMessages } : prev);
+    } catch (err: any) {
+      console.error("Failed to send message:", err.message);
+    }
   };
 
   const markRead = (jobId: string) => {
@@ -246,7 +338,7 @@ export function AdminSubmissions({ jobs, setJobs, workers, setWorkers, showToast
         ) : submitted.map(job => (
           <SubmissionCard key={job.id} job={job} workers={workers}
             onApprove={(rating) => { approve(job, rating); }}
-            onReject={() => reject(job)}
+            onReject={() => { setRejectJob(job); setRejectReason(""); }}
             onMessage={() => { markRead(job.id); setChatJob(jobs.find(j => j.id === job.id) || job); }}
           />
         ))
@@ -275,7 +367,7 @@ export function AdminSubmissions({ jobs, setJobs, workers, setWorkers, showToast
                   {sub?.files && sub.files.length > 0 && (
                     <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
                       {sub.files.map((f, fi) => f.type.startsWith("image")
-                        ? <img key={fi} src={f.dataUrl} alt={f.name} style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, border: `1px solid #ffffff10` }} />
+                        ? <img key={fi} src={f.url} alt={f.name} style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, border: `1px solid #ffffff10` }} />
                         : <span key={fi} style={{ fontSize: 10, color: C.gray }}>📎 {f.name}</span>
                       )}
                     </div>
@@ -292,6 +384,40 @@ export function AdminSubmissions({ jobs, setJobs, workers, setWorkers, showToast
             </Card>
           );
         })
+      )}
+
+      {/* Lightbox */}
+      {lightbox && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.92)", backdropFilter: "blur(8px)" }} onClick={() => setLightbox(null)}>
+          <div style={{ position: "relative", maxWidth: "90vw", maxHeight: "90vh" }} onClick={e => e.stopPropagation()}>
+            <img src={lightbox.url} alt={lightbox.name} style={{ maxWidth: "90vw", maxHeight: "80vh", borderRadius: 10, boxShadow: "0 24px 60px #000000cc", objectFit: "contain" }} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 12 }}>
+              <div style={{ fontSize: 12, color: "#A09890", fontFamily: "'Barlow Condensed',sans-serif" }}>{lightbox.name}</div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <a href={lightbox.url} download={lightbox.name} target="_blank" rel="noopener noreferrer"
+                  style={{ padding: "8px 18px", background: "#E8912A22", border: "1px solid #E8912A55", borderRadius: 8, color: "#E8912A", fontSize: 12, textDecoration: "none", fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 700, letterSpacing: "0.1em" }}>
+                  ⬇ Download
+                </a>
+                <button onClick={() => setLightbox(null)} style={{ padding: "8px 18px", background: "#22222A", border: "1px solid #ffffff10", borderRadius: 8, color: "#A09890", cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif", fontSize: 12, fontWeight: 700 }}>✕ Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rejectJob && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.75)", backdropFilter: "blur(6px)" }} onClick={() => setRejectJob(null)}>
+          <div style={{ width: "min(460px,92vw)", background: "rgba(18,18,24,.99)", border: "1px solid #C0392B44", borderRadius: 16, padding: "28px 24px", boxShadow: "0 24px 60px #000000cc", animation: "slideUp .28s cubic-bezier(.22,.68,0,1.2) both" }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 22, color: "#E8E4DC", fontWeight: 700, marginBottom: 6 }}>Reject Submission</div>
+            <div style={{ fontSize: 13, color: "#6B6870", marginBottom: 16, lineHeight: 1.6 }}>Provide a reason so the worker knows what to improve. This will be sent as a message.</div>
+            <div style={{ fontSize: 12, color: "#E8912A", marginBottom: 12, fontWeight: 600 }}>{rejectJob.title}</div>
+            <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="e.g. The animation timing needs work, please review the reference sheets and resubmit..." style={{ width: "100%", padding: "12px 14px", background: "#0D0D0F", border: "1px solid #ffffff10", borderBottom: "2px solid #C0392B66", borderRadius: 8, color: "#E8E4DC", fontFamily: "'Inter',sans-serif", fontSize: 13, outline: "none", resize: "vertical", minHeight: 100, boxSizing: "border-box" }} />
+            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+              <button onClick={() => setRejectJob(null)} style={{ flex: 1, padding: "11px", background: "#22222A", border: "1px solid #ffffff10", borderRadius: 8, color: "#A09890", cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.1em" }}>Cancel</button>
+              <button onClick={() => reject(rejectJob, rejectReason)} style={{ flex: 2, padding: "11px", background: "#C0392B22", border: "1px solid #C0392B55", borderRadius: 8, color: "#C0392B", cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.1em" }}>✕ Confirm Reject</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {chatJob && (

@@ -11,6 +11,10 @@ import { AdminManageJobs } from "./AdminManageJobs";
 import { AdminSubmissions } from "./AdminSubmissions";
 import { AdminWorkers } from "./AdminWorkers";
 import { AdminAnalytics } from "./AdminAnalytics";
+import { AdminJobHistory } from "./AdminJobHistory";
+import { AdminWithdrawals } from "./AdminWithdrawals";
+import { AdminWorkerReport } from "./AdminWorkerReport";
+import { AdminAnnouncements } from "./AdminAnnouncements";
 import type { Job, Worker, Notification } from "../../types";
 
 interface AdminUser { id: string; name: string; email: string; role: "admin"; balance: number; }
@@ -23,6 +27,10 @@ const NAV = [
   { id: "workers",      icon: "⬡",  label: "Workers"      },
   { id: "leaderboard",  icon: "🏆", label: "Leaderboard"  },
   { id: "analytics",    icon: "◉", label: "Analytics"    },
+  { id: "history",      icon: "📋", label: "Job History"  },
+  { id: "withdrawals",    icon: "💸", label: "Withdrawals"    },
+  { id: "announcements",  icon: "📣", label: "Announcements"  },
+  { id: "report",         icon: "📊", label: "PDF Report"     },
 ];
 const NAV_IDS = NAV.map(n => n.id);
 
@@ -38,6 +46,7 @@ export function AdminDashboard({ user, jobs, setJobs, workers, setWorkers, onLog
   onClearNotifs: () => void;
 }) {
   const [view, setView] = useState("overview");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [direction, setDirection] = useState<"forward" | "back">("forward");
   const prevIdx = useRef(0);
@@ -57,6 +66,7 @@ export function AdminDashboard({ user, jobs, setJobs, workers, setWorkers, onLog
     setDirection(nextIdx >= prevIdx.current ? "forward" : "back");
     prevIdx.current = nextIdx;
     setView(id);
+    setSidebarOpen(false);
   };
 
   const fromX = direction === "forward" ? "28px" : "-28px";
@@ -65,12 +75,19 @@ export function AdminDashboard({ user, jobs, setJobs, workers, setWorkers, onLog
     <div style={{ minHeight: "100vh", display: "flex", position: "relative", zIndex: 1 }}>
 
       {/* ── SIDEBAR ── */}
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 49, backdropFilter: "blur(2px)" }} />
+      )}
+
       <aside style={{
         position: "fixed", left: 0, top: 0, bottom: 0, width: 218,
         background: "rgba(10,10,13,.98)", borderRight: `1px solid ${C.gold}18`,
         backdropFilter: "blur(20px)", zIndex: 50,
         display: "flex", flexDirection: "column",
         boxShadow: `4px 0 40px #00000055`,
+        transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
+        transition: "transform .3s cubic-bezier(.22,.68,0,1.2)",
       }}>
         <div style={{ padding: "20px 18px 16px", borderBottom: `1px solid #ffffff07`, display: "flex", alignItems: "center", gap: 10 }}>
           <Logo size={26} />
@@ -126,8 +143,9 @@ export function AdminDashboard({ user, jobs, setJobs, workers, setWorkers, onLog
       </aside>
 
       {/* ── MAIN ── */}
-      <main style={{ marginLeft: 218, flex: 1, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+      <main style={{ marginLeft: 0, flex: 1, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
         <div style={{ height: 50, borderBottom: `1px solid #ffffff07`, display: "flex", alignItems: "center", padding: "0 32px", gap: 16, background: "rgba(10,10,13,.85)", backdropFilter: "blur(12px)", position: "sticky", top: 0, zIndex: 40 }}>
+          <button onClick={() => setSidebarOpen(p => !p)} style={{ background: "none", border: "none", color: C.ash, cursor: "pointer", fontSize: 20, padding: "4px 8px", marginRight: 8, display: "flex", alignItems: "center" }}>☰</button>
           <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 17, color: C.ash, fontWeight: 700 }}>
             {NAV.find(n => n.id === view)?.label}
           </span>
@@ -147,12 +165,16 @@ export function AdminDashboard({ user, jobs, setJobs, workers, setWorkers, onLog
         <div style={{ flex: 1, padding: "28px 36px" }}>
           <div key={view} style={{ animation: `pageSlideIn .35s cubic-bezier(.22,.68,0,1.2) both`, "--from-x": fromX } as React.CSSProperties}>
             {view === "overview"    && <AdminOverview stats={stats} jobs={jobs} workers={workers} setView={navigate} />}
-            {view === "post"        && <AdminPostJob jobs={jobs} setJobs={setJobs} showToast={showToast} setView={navigate} />}
+            {view === "post"        && <AdminPostJob jobs={jobs} setJobs={setJobs} showToast={showToast} setView={navigate} workers={workers} />}
             {view === "jobs"        && <AdminManageJobs jobs={jobs} setJobs={setJobs} showToast={showToast} />}
             {view === "submissions" && <AdminSubmissions jobs={jobs} setJobs={setJobs} workers={workers} setWorkers={setWorkers} showToast={showToast} />}
             {view === "workers"     && <AdminWorkers workers={workers} />}
             {view === "leaderboard" && <Leaderboard workers={workers} />}
             {view === "analytics"   && <AdminAnalytics stats={stats} jobs={jobs} workers={workers} />}
+            {view === "history"     && <AdminJobHistory jobs={jobs} workers={workers} />}
+            {view === "withdrawals" && <AdminWithdrawals showToast={showToast} />}
+            {view === "announcements" && <AdminAnnouncements adminName={user.name} showToast={showToast} />}
+            {view === "report" && <AdminWorkerReport workers={workers} jobs={jobs} />}
           </div>
         </div>
       </main>

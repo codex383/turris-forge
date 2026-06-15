@@ -1,9 +1,11 @@
+import { getUserProfile } from "../lib/userProfile";
 import { useState } from "react";
 import { C, SKILL_CATEGORIES, ADMIN_SECRET } from "../data/seed";
 import { Logo } from "./Logo";
 import { Toast } from "./Toast";
 import { Input, Select, Btn } from "./shared";
-import { registerUser, loginUser, saveSession, type StoredUser, storedToWorker } from "../lib/auth";
+import { login, register, resetPassword } from "../lib/authFirebase";
+import { createUserProfile } from "../lib/userProfile";
 import type { Worker } from "../types";
 
 type AdminUser = { id: string; name: string; email: string; role: "admin"; balance: number };
@@ -24,6 +26,9 @@ export function AuthScreen({ onAuth }: { onAuth: (u: AnyUser, stored: StoredUser
   const [rPass2, setRPass2] = useState("");
   const [showRPass, setShowRPass] = useState(false);
   const [secret, setSecret] = useState("");
+  const [showReset, setShowReset] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetSent, setResetSent] = useState(false);
   const [bio, setBio] = useState("");
   const [portfolio, setPortfolio] = useState("");
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
@@ -32,47 +37,111 @@ export function AuthScreen({ onAuth }: { onAuth: (u: AnyUser, stored: StoredUser
   const toggleSkill = (s: string) =>
     setSelectedSkills(p => p.includes(s) ? p.filter(x => x !== s) : [...p, s]);
 
-  const handleLogin = () => {
-    if (!email || !pass) { setToast("Please enter your email and password."); return; }
-    const res = loginUser(email.trim(), pass);
-    if (!res.ok || !res.user) { setToast(`❌ ${res.error}`); return; }
-    const stored = res.user;
-    if (stored.role === "admin") {
-      onAuth({ id: stored.id, name: stored.name, email: stored.email, role: "admin", balance: 0 }, stored);
-    } else {
-      onAuth(storedToWorker(stored), stored);
-    }
-  };
+const handleLogin = async () => {
+  try {
+    // 1. Firebase login
+    const res = await login(email, pass);
 
-  const handleRegisterWorker = () => {
-    if (step === 1) {
-      if (!name.trim()) { setToast("Enter your display name."); return; }
-      if (!rEmail.trim()) { setToast("Enter your email address."); return; }
-      if (rPass.length < 6) { setToast("Password must be at least 6 characters."); return; }
-      if (rPass !== rPass2) { setToast("Passwords do not match."); return; }
-      setStep(2); return;
-    }
-    if (selectedSkills.length === 0) { setToast("Select at least one skill category."); return; }
-    const res = registerUser(name.trim(), rEmail.trim(), rPass, "worker", {
-      skills: selectedSkills, bio, portfolio,
-    });
-    if (!res.ok || !res.user) { setToast(`❌ ${res.error}`); return; }
-    const stored = res.user;
-    saveSession(stored);
-    onAuth(storedToWorker(stored), stored);
-  };
+    const user = res.user;
 
-  const handleRegisterAdmin = () => {
-    if (!name.trim()) { setToast("Enter your name."); return; }
-    if (!rEmail.trim()) { setToast("Enter your email address."); return; }
-    if (rPass.length < 6) { setToast("Password must be at least 6 characters."); return; }
-    if (secret !== ADMIN_SECRET) { setToast("❌ Invalid secret code — contact the studio director."); return; }
-    const res = registerUser(name.trim(), rEmail.trim(), rPass, "admin");
-    if (!res.ok || !res.user) { setToast(`❌ ${res.error}`); return; }
-    const stored = res.user;
-    saveSession(stored);
-    onAuth({ id: stored.id, name: stored.name, email: stored.email, role: "admin", balance: 0 }, stored);
-  };
+    // 2. Load Firestore profile
+    const profile = await getUserProfile(user.uid);
+
+    if (!profile) {
+      alert("Profile not found in Firestore");
+      return;
+    }
+
+    console.log("Full user profile:", profile);
+
+    // 3. Send to app
+    onAuth(
+      {
+        id: profile.uid,
+        name: profile.name,
+        email: profile.email,
+        role: profile.role === "admin" ? "admin" : "worker",
+        balance: 0
+      },
+      profile
+    );
+
+  } catch (err: any) {
+    alert(err.message);
+  }
+};
+
+const handleRegister = async () => {
+  try {
+    const res = await register(email, pass);
+
+    // THEN continue your worker/admin flow if needed
+    console.log("Created Firebase user:", res.user);
+
+  } catch (err: any) {
+    alert(err.message);
+  }
+};
+
+const handleRegisterWorker = async () => {
+  if (step === 1) {
+    if (!name.trim()) return setToast("Enter name");
+    if (!rEmail.trim()) return setToast("Enter email");
+    if (rPass.length < 6) return setToast("Password too short");
+    if (rPass !== rPass2) return setToast("Passwords do not match");
+
+    setStep(2);
+    return;
+  }
+
+  if (selectedSkills.length === 0) {
+    return setToast("Select at least one skill");
+  }
+
+  try {
+  const cred = await register(rEmail.trim(), rPass);
+
+  await createUserProfile({
+    uid: cred.user.uid,
+    name: name.trim(),
+    email: rEmail.trim(),
+    role: "worker",
+    balance: 0,
+    skills: selectedSkills,
+    bio,
+    portfolio,
+  });
+
+  setToast("Account created!");
+
+} catch (err: any) {
+  setToast(err.message);
+}
+};
+  
+const handleRegisterAdmin = async () => {
+  if (!name.trim()) return setToast("Enter name");
+  if (!rEmail.trim()) return setToast("Enter email");
+  if (rPass.length < 6) return setToast("Password too short");
+  if (secret !== ADMIN_SECRET) return setToast("Wrong secret");
+
+  try {
+  const cred = await register(rEmail.trim(), rPass);
+
+  await createUserProfile({
+    uid: cred.user.uid,
+    name: name.trim(),
+    email: rEmail.trim(),
+    role: "admin",
+    balance: 0,
+  });
+
+  setToast("Admin account created!");
+
+} catch (err: any) {
+  setToast(err.message);
+}
+};
 
   const tabLabels = ["Log In", "Join as Creative", "Admin Access"];
   const tabModes = ["login", "register-worker", "register-admin"] as const;
@@ -140,16 +209,48 @@ export function AuthScreen({ onAuth }: { onAuth: (u: AnyUser, stored: StoredUser
                 </button>
               </div>
               <Btn onClick={handleLogin} style={{ width: "100%", padding: 15, marginTop: 2 }}>⚡ Enter the Forge</Btn>
-              <div style={{ textAlign: "center", padding: "10px 0 0", borderTop: `1px solid #ffffff08` }}>
-                <div style={{ fontSize: 11, color: C.gray, marginBottom: 6, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.15em", textTransform: "uppercase" }}>Demo Accounts</div>
-                <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-                  {([["admin@turrisforge.com","admin123","Admin",C.gold],["seun@forge.ng","forge123","Worker",C.cyan]] as [string,string,string,string][]).map(([e,p,l,c]) => (
-                    <button key={e} onClick={() => { setEmail(e); setPass(p); }} style={{ padding: "5px 10px", background: `${c}15`, border: `1px solid ${c}33`, borderRadius: 5, cursor: "pointer", color: c, fontSize: 11, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.1em" }}>
-                      {l}: {e}
-                    </button>
-                  ))}
-                </div>
-              </div>
+     
+<div style={{ textAlign: "center", marginTop: 6 }}>
+  <button onClick={() => { setShowReset(true); setResetEmail(email); setResetSent(false); }} style={{ background: "none", border: "none", color: C.gray, cursor: "pointer", fontSize: 12, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.1em", textDecoration: "underline" }}>
+    Forgot Password?
+  </button>
+</div>
+
+{/* Reset Password Modal */}
+{showReset && (
+  <div style={{ position: "fixed", inset: 0, zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.7)", backdropFilter: "blur(6px)" }} onClick={() => setShowReset(false)}>
+    <div style={{ width: "min(420px,92vw)", background: "rgba(18,18,24,.99)", border: `1px solid ${C.gold}33`, borderRadius: 16, padding: "32px 28px", boxShadow: `0 24px 60px #000000cc`, animation: "slideUp .28s cubic-bezier(.22,.68,0,1.2) both" }} onClick={e => e.stopPropagation()}>
+      <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 22, color: C.ash, fontWeight: 700, marginBottom: 6 }}>Reset Password</div>
+      {resetSent ? (
+        <div style={{ textAlign: "center", padding: "20px 0" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>📧</div>
+          <div style={{ fontSize: 14, color: C.ash, marginBottom: 8 }}>Reset email sent!</div>
+          <div style={{ fontSize: 12, color: C.gray, marginBottom: 20 }}>Check your inbox at <span style={{ color: C.gold }}>{resetEmail}</span> and follow the link to reset your password.</div>
+          <Btn onClick={() => setShowReset(false)} style={{ width: "100%" }}>← Back to Login</Btn>
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 13, color: C.gray, marginBottom: 20, lineHeight: 1.6 }}>Enter your email and we'll send you a link to reset your password.</div>
+          <Input label="Email Address" type="email" value={resetEmail} onChange={setResetEmail} placeholder="you@forge.com" />
+          <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+            <Btn variant="subtle" onClick={() => setShowReset(false)} style={{ flex: 1 }}>Cancel</Btn>
+            <Btn onClick={async () => {
+              if (!resetEmail.trim()) return setToast("Enter your email");
+              try {
+                await resetPassword(resetEmail.trim());
+                setResetSent(true);
+              } catch (err: any) {
+                setToast(err.message);
+              }
+            }} style={{ flex: 2 }}>📧 Send Reset Link</Btn>
+          </div>
+        </>
+      )}
+    </div>
+  </div>
+)}         
+
+
             </div>
           )}
 
@@ -189,7 +290,8 @@ export function AuthScreen({ onAuth }: { onAuth: (u: AnyUser, stored: StoredUser
                     Select Your Skill Categories
                   </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 7, maxHeight: 240, overflowY: "auto", padding: "2px 0" }}>
-                    {SKILL_CATEGORIES.map(s => (
+  
+                  {SKILL_CATEGORIES.map(s => (
                       <button key={s} onClick={() => toggleSkill(s)} style={{
                         padding: "6px 11px",
                         fontFamily: "'Barlow Condensed',sans-serif", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase",
